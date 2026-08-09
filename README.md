@@ -1,2 +1,36 @@
 # DarkFlame
+
+Visual Studio 2026 C++ solution containing `DarkFlame.exe` and two x86 DLLs:
+
+- `DarkFlameAgent.dll` is manually mapped into the suspended MTA launcher and
+  installs the child-process hook.
+- `DarkFlameClient.dll` is manually mapped by the bootstrap agent into
+  `gta_sa.exe` and owns the runtime loader and netc hooks.
+
+Build `DarkFlame.sln` with `Release | x86`. Artifacts are written to
+`bin/Release/x86`.
+
+The client is initialized synchronously while `gta_sa.exe` is still suspended.
+It hooks `LdrLoadDll` before the game is resumed and installs the netc detours
+before the intercepted netc load returns. Bootstrap fails closed: the game child
+is not resumed if the client cannot become ready.
+
+The netc layer installs ten no-op/constant-return anti-cheat hooks and one
+selective `CNet__SendPacket` filter. The packet filter preserves the original
+call for normal traffic and acknowledges blocked packet IDs 34, 91, 92, and 94
+locally. Runtime hook calls are intentionally not logged.
+
+Both manually mapped DLLs install a PDB-aware crash handler. Release builds emit
+`DarkFlameAgent.pdb` and `DarkFlameClient.pdb`; keep each PDB beside its DLL.
+`DarkFlame.log` is written beside `DarkFlame.exe` and reset at each loader
+start. Crash traces and minidumps go to its `CrashDumps` folder, with
+manual-map addresses resolved to function names and source lines. Each process
+start removes only its own previous
+DarkFlame crash artifacts, so stale dumps do not pile up.
+
+Bootstrap environment variables are removed from Loader, Agent, and Client as
+soon as their values have been consumed, including failure paths.
+
+The required x86 MinHook sources are vendored under
+`Agent/third_party/minhook`; the solution has no external library dependency.
 MTA:SA Province Software

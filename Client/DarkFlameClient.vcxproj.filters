@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files"><UniqueIdentifier>{96C6CDB2-03AD-4989-AF0E-A7D9F2AD5E06}</UniqueIdentifier></Filter>
+    <Filter Include="Header Files"><UniqueIdentifier>{9B8CB3CD-B449-4559-9D22-E5512713DAD6}</UniqueIdentifier></Filter>
+    <Filter Include="Shared"><UniqueIdentifier>{E720A64B-900B-4C3E-B3F8-F7194BE23258}</UniqueIdentifier></Filter>
+    <Filter Include="Dependencies"><UniqueIdentifier>{60BB86DF-8BB7-4C72-9DB1-0F31DD4DD37A}</UniqueIdentifier></Filter>
+    <Filter Include="Dependencies\MinHook"><UniqueIdentifier>{5143642A-C245-40F6-82A7-56209AC7A95D}</UniqueIdentifier></Filter>
+    <Filter Include="Dependencies\MinHook\HDE"><UniqueIdentifier>{DC3D5EBA-E761-4D6D-83E3-06D378A5B7D6}</UniqueIdentifier></Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="dllmain.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="logger.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="netc_hooks.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="signature_scanner.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\Agent\third_party\minhook\buffer.c"><Filter>Dependencies\MinHook</Filter></ClCompile>
+    <ClCompile Include="..\Agent\third_party\minhook\hook.c"><Filter>Dependencies\MinHook</Filter></ClCompile>
+    <ClCompile Include="..\Agent\third_party\minhook\trampoline.c"><Filter>Dependencies\MinHook</Filter></ClCompile>
+    <ClCompile Include="..\Agent\third_party\minhook\hde\hde32.c"><Filter>Dependencies\MinHook\HDE</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="logger.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="hook_utils.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="module_utils.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="netc_hooks.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="netc_signatures.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="signature_scanner.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="..\Shared\bootstrap_protocol.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\Shared\crash_handler.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\Shared\environment.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\Shared\runtime_log.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\Agent\third_party\minhook\MinHook.h"><Filter>Dependencies\MinHook</Filter></ClInclude>
+    <ClInclude Include="..\Agent\third_party\minhook\buffer.h"><Filter>Dependencies\MinHook</Filter></ClInclude>
+    <ClInclude Include="..\Agent\third_party\minhook\trampoline.h"><Filter>Dependencies\MinHook</Filter></ClInclude>
+    <ClInclude Include="..\Agent\third_party\minhook\hde\hde32.h"><Filter>Dependencies\MinHook\HDE</Filter></ClInclude>
+    <ClInclude Include="..\Agent\third_party\minhook\hde\pstdint.h"><Filter>Dependencies\MinHook\HDE</Filter></ClInclude>
+    <ClInclude Include="..\Agent\third_party\minhook\hde\table32.h"><Filter>Dependencies\MinHook\HDE</Filter></ClInclude>
+  </ItemGroup>
+</Project>

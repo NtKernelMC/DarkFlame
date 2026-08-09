@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{D17C3F03-AE9B-46D5-A76F-D3E413F29DA9}</UniqueIdentifier>
+      <Extensions>cpp;c</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{38EB47C8-C0B7-4F70-A814-CFDD8B68EA6D}</UniqueIdentifier>
+      <Extensions>h;hpp</Extensions>
+    </Filter>
+    <Filter Include="Shared">
+      <UniqueIdentifier>{A9A8BFD4-23C8-4C5D-A37D-C6F19A6DCF2E}</UniqueIdentifier>
+      <Extensions>h;hpp</Extensions>
+    </Filter>
+    <Filter Include="Dependencies">
+      <UniqueIdentifier>{4D20D43C-A256-4A65-A00E-EC18B679D093}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Dependencies\MinHook">
+      <UniqueIdentifier>{FB0CE5C9-707B-46E0-9029-2AF273D71E1E}</UniqueIdentifier>
+      <Extensions>c;h</Extensions>
+    </Filter>
+    <Filter Include="Dependencies\MinHook\HDE">
+      <UniqueIdentifier>{B9C94D5B-FD55-4703-81CF-5F46E6C02934}</UniqueIdentifier>
+      <Extensions>c;h</Extensions>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="dllmain.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="injection.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="third_party\minhook\buffer.c"><Filter>Dependencies\MinHook</Filter></ClCompile>
+    <ClCompile Include="third_party\minhook\hook.c"><Filter>Dependencies\MinHook</Filter></ClCompile>
+    <ClCompile Include="third_party\minhook\trampoline.c"><Filter>Dependencies\MinHook</Filter></ClCompile>
+    <ClCompile Include="third_party\minhook\hde\hde32.c"><Filter>Dependencies\MinHook\HDE</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="injection.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="process_utils.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="..\Shared\bootstrap_protocol.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\Shared\crash_handler.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\Shared\environment.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\Shared\runtime_log.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\Shared\manual_map.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="third_party\minhook\MinHook.h"><Filter>Dependencies\MinHook</Filter></ClInclude>
+    <ClInclude Include="third_party\minhook\buffer.h"><Filter>Dependencies\MinHook</Filter></ClInclude>
+    <ClInclude Include="third_party\minhook\trampoline.h"><Filter>Dependencies\MinHook</Filter></ClInclude>
+    <ClInclude Include="third_party\minhook\hde\hde32.h"><Filter>Dependencies\MinHook\HDE</Filter></ClInclude>
+    <ClInclude Include="third_party\minhook\hde\pstdint.h"><Filter>Dependencies\MinHook\HDE</Filter></ClInclude>
+    <ClInclude Include="third_party\minhook\hde\table32.h"><Filter>Dependencies\MinHook\HDE</Filter></ClInclude>
+  </ItemGroup>
+</Project>
