@@ -58,6 +58,8 @@
   <ItemGroup>
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="logger.cpp" />
+    <ClCompile Include="lua_args_hook.cpp" />
+    <ClCompile Include="memory_module_dumper.cpp" />
     <ClCompile Include="netc_hooks.cpp" />
     <ClCompile Include="signature_scanner.cpp" />
     <ClCompile Include="..\Agent\third_party\minhook\buffer.c"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
@@ -67,8 +69,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="logger.h" />
+    <ClInclude Include="lua_args_hook.h" />
     <ClInclude Include="hook_utils.h" />
     <ClInclude Include="module_utils.h" />
+    <ClInclude Include="memory_module_dumper.h" />
     <ClInclude Include="netc_hooks.h" />
     <ClInclude Include="netc_signatures.h" />
     <ClInclude Include="signature_scanner.h" />

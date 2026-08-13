@@ -1,4 +1,6 @@
 #include "logger.h"
+#include "lua_args_hook.h"
+#include "memory_module_dumper.h"
 #include "module_utils.h"
 #include "netc_hooks.h"
 #include "../Shared/bootstrap_protocol.h"
@@ -10,6 +12,7 @@
 #include <winternl.h>
 
 #include <atomic>
+#include <string>
 #include <string_view>
 
 namespace
@@ -22,6 +25,21 @@ HMODULE g_module{};
 void* g_ldrLoadDllTarget{};
 LdrLoadDllFn g_ldrLoadDll{};
 std::atomic_bool g_clientLogged{};
+std::wstring g_loaderDirectory;
+
+void ScheduleClientDump(HMODULE client)
+{
+    if(!client || g_loaderDirectory.empty())
+    {
+        Log::Write(L"[dump] client.dll dump skipped: loader directory unavailable");
+        return;
+    }
+    const std::wstring path = g_loaderDirectory + L"\\client.unpacked.dll";
+    if(MemoryModuleDumper::Schedule(client, path))
+        Log::Write(L"[dump] client.dll memory dump scheduled in 5 seconds");
+    else
+        Log::Write(L"[dump] client.dll memory dump scheduling failed");
+}
 
 bool IsLoadedModule(const UNICODE_STRING* moduleName, std::wstring_view expected)
 {
@@ -38,8 +56,14 @@ NTSTATUS NTAPI HookLdrLoadDll(PWSTR searchPath, ULONG flags,
     if (status < 0)
         return status;
 
-    if (IsLoadedModule(moduleName, L"client.dll") && !g_clientLogged.exchange(true))
+    if(IsLoadedModule(moduleName, L"client.dll") && !g_clientLogged.exchange(true))
+    {
         Log::Write(L"[loader] client.dll found");
+        const HMODULE client = moduleHandle
+            ? static_cast<HMODULE>(*moduleHandle) : GetModuleHandleW(L"client.dll");
+        ScheduleClientDump(client);
+        StartLuaArgsHook(client);
+    }
 
     if (IsLoadedModule(moduleName, L"netc.dll"))
     {
@@ -102,8 +126,13 @@ bool InitializeRuntime()
         return false;
     }
 
-    if (GetModuleHandleW(L"client.dll") && !g_clientLogged.exchange(true))
+    const HMODULE client = GetModuleHandleW(L"client.dll");
+    if(client && !g_clientLogged.exchange(true))
+    {
         Log::Write(L"[loader] client.dll found");
+        ScheduleClientDump(client);
+        StartLuaArgsHook(client);
+    }
 
     const HMODULE netc = GetModuleHandleW(L"netc.dll");
     if (netc && !InstallNetcHooks(netc))
@@ -128,7 +157,14 @@ BOOL WINAPI DllMain(HMODULE module, DWORD reason, void*)
     DisableThreadLibraryCalls(module);
     Log::Initialize(module);
     Log::Write(L"[client] DllMain attached");
+    g_loaderDirectory = Environment::Read(BootstrapProtocol::LogDirectoryVariable);
     const std::wstring clientPath = Environment::Read(BootstrapProtocol::ClientPathVariable);
+    if(g_loaderDirectory.empty())
+    {
+        const auto separator = clientPath.find_last_of(L"\\/");
+        if(separator != std::wstring::npos)
+            g_loaderDirectory = clientPath.substr(0, separator);
+    }
     Environment::Clear(BootstrapProtocol::LogDirectoryVariable);
     Environment::Clear(BootstrapProtocol::AgentPathVariable);
     Environment::Clear(BootstrapProtocol::ClientPathVariable);
