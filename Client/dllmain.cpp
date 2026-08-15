@@ -1,3 +1,5 @@
+#include "forensic_hooks.h"
+#include "gui.h"
 #include "logger.h"
 #include "lua_args_hook.h"
 #include "memory_module_dumper.h"
@@ -62,7 +64,7 @@ NTSTATUS NTAPI HookLdrLoadDll(PWSTR searchPath, ULONG flags,
         const HMODULE client = moduleHandle
             ? static_cast<HMODULE>(*moduleHandle) : GetModuleHandleW(L"client.dll");
         ScheduleClientDump(client);
-        StartLuaArgsHook(client);
+        StartLuaArgsHook(client, g_loaderDirectory);
     }
 
     if (IsLoadedModule(moduleName, L"netc.dll"))
@@ -126,12 +128,18 @@ bool InitializeRuntime()
         return false;
     }
 
+    if(!StartGui(g_module))
+        Log::Write(L"[gui] startup failed");
+
+    if(!StartForensicHooks(GetModuleHandleW(L"client.dll"), g_loaderDirectory))
+        Log::Write(L"[process-filter] early hook startup failed");
+
     const HMODULE client = GetModuleHandleW(L"client.dll");
     if(client && !g_clientLogged.exchange(true))
     {
         Log::Write(L"[loader] client.dll found");
         ScheduleClientDump(client);
-        StartLuaArgsHook(client);
+        StartLuaArgsHook(client, g_loaderDirectory);
     }
 
     const HMODULE netc = GetModuleHandleW(L"netc.dll");

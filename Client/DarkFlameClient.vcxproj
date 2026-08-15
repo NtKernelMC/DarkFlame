@@ -44,7 +44,7 @@
       <Optimization>MaxSpeed</Optimization>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <AdditionalOptions>/Zo %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>$(SolutionDir)Agent\third_party\minhook;$(SolutionDir)Agent\third_party\minhook\hde;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)third_party\imgui;$(ProjectDir)third_party\imgui\backends;$(ProjectDir)third_party\ImGuiColorTextEdit;$(SolutionDir)Agent\third_party\minhook;$(SolutionDir)Agent\third_party\minhook\hde;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -52,30 +52,50 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <ProgramDatabaseFile>$(OutDir)$(TargetName).pdb</ProgramDatabaseFile>
-      <AdditionalDependencies>Dbghelp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Advapi32.lib;OleAut32.lib;Dbghelp.lib;d3d9.lib;windowscodecs.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="forensic_hooks.cpp" />
+    <ClCompile Include="gui.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="logger.cpp" />
     <ClCompile Include="lua_args_hook.cpp" />
+    <ClCompile Include="lua_bridge.cpp" />
     <ClCompile Include="memory_module_dumper.cpp" />
     <ClCompile Include="netc_hooks.cpp" />
     <ClCompile Include="signature_scanner.cpp" />
+    <ClCompile Include="third_party\imgui\imgui.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_draw.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_tables.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_widgets.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\imgui\backends\imgui_impl_dx9.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\imgui\backends\imgui_impl_win32.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\ImGuiColorTextEdit\TextEditor.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="..\Agent\third_party\minhook\buffer.c"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="..\Agent\third_party\minhook\hook.c"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="..\Agent\third_party\minhook\trampoline.c"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="..\Agent\third_party\minhook\hde\hde32.c"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="forensic_hooks.h" />
+    <ClInclude Include="gui.h" />
     <ClInclude Include="logger.h" />
     <ClInclude Include="lua_args_hook.h" />
+    <ClInclude Include="lua_bridge.h" />
     <ClInclude Include="hook_utils.h" />
     <ClInclude Include="module_utils.h" />
     <ClInclude Include="memory_module_dumper.h" />
     <ClInclude Include="netc_hooks.h" />
     <ClInclude Include="netc_signatures.h" />
     <ClInclude Include="signature_scanner.h" />
+    <ClInclude Include="netc_bitstream.h" />
+    <ClInclude Include="resource.h" />
+    <ClInclude Include="third_party\imgui\imgui.h" />
+    <ClInclude Include="third_party\imgui\imconfig.h" />
+    <ClInclude Include="third_party\imgui\backends\imgui_impl_dx9.h" />
+    <ClInclude Include="third_party\imgui\backends\imgui_impl_win32.h" />
+    <ClInclude Include="third_party\ImGuiColorTextEdit\TextEditor.h" />
     <ClInclude Include="..\Shared\bootstrap_protocol.h" />
     <ClInclude Include="..\Shared\crash_handler.h" />
     <ClInclude Include="..\Shared\environment.h" />
@@ -86,6 +106,9 @@
     <ClInclude Include="..\Agent\third_party\minhook\hde\hde32.h" />
     <ClInclude Include="..\Agent\third_party\minhook\hde\pstdint.h" />
     <ClInclude Include="..\Agent\third_party\minhook\hde\table32.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="DarkFlameClient.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

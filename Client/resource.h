@@ -1,0 +1,4 @@
+#pragma once
+
+#define IDR_DARK_FLAME_BACKGROUND 101
+#define IDR_DARK_FLAME_BANNER 102

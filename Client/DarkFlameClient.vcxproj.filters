@@ -7,28 +7,50 @@
     <Filter Include="Dependencies"><UniqueIdentifier>{60BB86DF-8BB7-4C72-9DB1-0F31DD4DD37A}</UniqueIdentifier></Filter>
     <Filter Include="Dependencies\MinHook"><UniqueIdentifier>{5143642A-C245-40F6-82A7-56209AC7A95D}</UniqueIdentifier></Filter>
     <Filter Include="Dependencies\MinHook\HDE"><UniqueIdentifier>{DC3D5EBA-E761-4D6D-83E3-06D378A5B7D6}</UniqueIdentifier></Filter>
+    <Filter Include="Dependencies\ImGui"><UniqueIdentifier>{6B605873-7E30-4C33-B3D6-A72A8D98448B}</UniqueIdentifier></Filter>
+    <Filter Include="Resources"><UniqueIdentifier>{D8CA48E1-9533-4FBA-8949-D0EE5112F49A}</UniqueIdentifier></Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="forensic_hooks.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="gui.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="dllmain.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="logger.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="lua_args_hook.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="lua_bridge.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="memory_module_dumper.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="netc_hooks.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="signature_scanner.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="third_party\imgui\imgui.cpp"><Filter>Dependencies\ImGui</Filter></ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_draw.cpp"><Filter>Dependencies\ImGui</Filter></ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_tables.cpp"><Filter>Dependencies\ImGui</Filter></ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_widgets.cpp"><Filter>Dependencies\ImGui</Filter></ClCompile>
+    <ClCompile Include="third_party\imgui\backends\imgui_impl_dx9.cpp"><Filter>Dependencies\ImGui</Filter></ClCompile>
+    <ClCompile Include="third_party\imgui\backends\imgui_impl_win32.cpp"><Filter>Dependencies\ImGui</Filter></ClCompile>
+    <ClCompile Include="third_party\ImGuiColorTextEdit\TextEditor.cpp"><Filter>Dependencies\ImGui</Filter></ClCompile>
     <ClCompile Include="..\Agent\third_party\minhook\buffer.c"><Filter>Dependencies\MinHook</Filter></ClCompile>
     <ClCompile Include="..\Agent\third_party\minhook\hook.c"><Filter>Dependencies\MinHook</Filter></ClCompile>
     <ClCompile Include="..\Agent\third_party\minhook\trampoline.c"><Filter>Dependencies\MinHook</Filter></ClCompile>
     <ClCompile Include="..\Agent\third_party\minhook\hde\hde32.c"><Filter>Dependencies\MinHook\HDE</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="forensic_hooks.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="gui.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="logger.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="lua_args_hook.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="lua_bridge.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="hook_utils.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="module_utils.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="memory_module_dumper.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="netc_hooks.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="netc_signatures.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="signature_scanner.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="netc_bitstream.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="resource.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="third_party\imgui\imgui.h"><Filter>Dependencies\ImGui</Filter></ClInclude>
+    <ClInclude Include="third_party\imgui\imconfig.h"><Filter>Dependencies\ImGui</Filter></ClInclude>
+    <ClInclude Include="third_party\imgui\backends\imgui_impl_dx9.h"><Filter>Dependencies\ImGui</Filter></ClInclude>
+    <ClInclude Include="third_party\imgui\backends\imgui_impl_win32.h"><Filter>Dependencies\ImGui</Filter></ClInclude>
+    <ClInclude Include="third_party\ImGuiColorTextEdit\TextEditor.h"><Filter>Dependencies\ImGui</Filter></ClInclude>
     <ClInclude Include="..\Shared\bootstrap_protocol.h"><Filter>Shared</Filter></ClInclude>
     <ClInclude Include="..\Shared\crash_handler.h"><Filter>Shared</Filter></ClInclude>
     <ClInclude Include="..\Shared\environment.h"><Filter>Shared</Filter></ClInclude>
@@ -39,5 +61,8 @@
     <ClInclude Include="..\Agent\third_party\minhook\hde\hde32.h"><Filter>Dependencies\MinHook\HDE</Filter></ClInclude>
     <ClInclude Include="..\Agent\third_party\minhook\hde\pstdint.h"><Filter>Dependencies\MinHook\HDE</Filter></ClInclude>
     <ClInclude Include="..\Agent\third_party\minhook\hde\table32.h"><Filter>Dependencies\MinHook\HDE</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="DarkFlameClient.rc"><Filter>Resources</Filter></ResourceCompile>
   </ItemGroup>
 </Project>

@@ -2,4 +2,6 @@
 
 #include <Windows.h>
 
-bool StartLuaArgsHook(HMODULE client);
+#include <string_view>
+
+bool StartLuaArgsHook(HMODULE client, std::wstring_view outputDirectory);
