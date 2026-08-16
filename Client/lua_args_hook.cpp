@@ -24,6 +24,7 @@ std::atomic_uint32_t g_dumpSequence{};
 std::atomic_uint32_t g_gateHits{};
 std::uintptr_t g_vmpTarget{};
 std::wstring g_dumpDirectory;
+std::wstring g_loaderDirectory;
 
 bool ReadBytes(std::uintptr_t address, void* output, std::size_t size)
 {
@@ -292,6 +293,8 @@ void __cdecl InspectVmpGate(const VmpGateFrame* frame)
     const std::uintptr_t path = FindScriptPath(*frame, pathText);
     if(!path)
         return;
+    if(ContainsI(pathText, "province_tram"))
+        NotifyTramResourceScriptSeen(pathText);
     if(ContainsI(pathText, "province_ac"))
         DumpProvinceAc(buffer, size, path);
 }
@@ -369,7 +372,7 @@ DWORD WINAPI ScanThread(void* parameter)
     const bool installed = PatchVmpGate(gate);
     Log::Scan(L"Lua VMP argument relay",
         installed ? L"hook_installed" : L"hook_failed", gate);
-    if(!InstallLuaBridge(client))
+    if(!InstallLuaBridge(client, g_loaderDirectory))
         Log::Write(L"[lua-hook] bridge unavailable; VMP relay remains active");
     FreeLibrary(client);
     return 0;
@@ -382,6 +385,7 @@ bool StartLuaArgsHook(HMODULE client, std::wstring_view outputDirectory)
         return false;
     if(!outputDirectory.empty())
     {
+        g_loaderDirectory = outputDirectory;
         g_dumpDirectory = std::wstring(outputDirectory) + L"\\ProvinceAC";
         CleanDumpDirectory();
     }

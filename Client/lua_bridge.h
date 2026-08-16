@@ -2,4 +2,7 @@
 
 #include <Windows.h>
 
-bool InstallLuaBridge(HMODULE client);
+#include <string_view>
+
+bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory);
+void NotifyTramResourceScriptSeen(std::string_view path);

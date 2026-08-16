@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -92,12 +93,30 @@ std::string g_pendingResource;
 std::string g_eventText;
 std::vector<GuiLuaThread> g_threads;
 std::vector<GuiLuaThread> g_visibleThreads;
+struct TramState
+{
+    bool loaded{};
+    bool bot{};
+    bool traffic{};
+    bool debug{};
+    bool siren{true};
+    bool force{};
+    std::string route{"не выбран"};
+    std::string direction{"forward"};
+    std::string status{"ожидание ресурса"};
+    std::string money{"0"};
+    std::string catcher{"не зарегистрирован"};
+};
+TramState g_tramState;
+TramState g_visibleTramState;
+std::deque<std::string> g_tramCommands;
 char g_targetResource[128]{"province_ac"};
 std::uintptr_t g_selectedThread{};
 std::uintptr_t g_pendingUnload{};
 bool g_luaPending{};
 bool g_eventsDirty{};
 bool g_threadsDirty{};
+bool g_tramDirty{true};
 std::atomic_bool g_started{};
 std::atomic_bool g_visible{};
 std::atomic_long g_factoryState{};
@@ -108,6 +127,7 @@ std::atomic_long g_inputFactoryState{};
 std::atomic_long g_inputDeviceState{};
 bool g_initialized{};
 int g_activeTab{};
+int g_trafficState{3};
 
 ImTextureRef Texture(IDirect3DTexture9* texture)
 {
@@ -365,10 +385,15 @@ void ConfigureFonts()
     io.IniFilename = nullptr;
     ImFont* fallback = io.Fonts->AddFontDefault();
     io.FontDefault = fallback;
-    g_titleFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 29.0f);
-    g_tabFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 27.0f);
-    g_buttonFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 55.0f);
-    g_codeFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consola.ttf", 20.0f);
+    const ImWchar* glyphs = io.Fonts->GetGlyphRangesCyrillic();
+    g_titleFont = io.Fonts->AddFontFromFileTTF(
+        "C:\\Windows\\Fonts\\segoeuib.ttf", 29.0f, nullptr, glyphs);
+    g_tabFont = io.Fonts->AddFontFromFileTTF(
+        "C:\\Windows\\Fonts\\segoeuib.ttf", 27.0f, nullptr, glyphs);
+    g_buttonFont = io.Fonts->AddFontFromFileTTF(
+        "C:\\Windows\\Fonts\\segoeuib.ttf", 55.0f, nullptr, glyphs);
+    g_codeFont = io.Fonts->AddFontFromFileTTF(
+        "C:\\Windows\\Fonts\\consola.ttf", 20.0f, nullptr, glyphs);
     if(!g_titleFont) g_titleFont = fallback;
     if(!g_tabFont) g_tabFont = fallback;
     if(!g_buttonFont) g_buttonFont = fallback;
@@ -593,6 +618,107 @@ void SyncThreads()
     }
 }
 
+void QueueTramCommand(std::string command)
+{
+    Log::Write(L"[trambot] GUI command queued: "
+        + std::wstring(command.begin(), command.end()));
+    std::scoped_lock lock(g_bridgeMutex);
+    if(g_tramCommands.size() >= 64)
+        g_tramCommands.pop_front();
+    g_tramCommands.push_back(std::move(command));
+}
+
+void SyncTramState()
+{
+    std::scoped_lock lock(g_bridgeMutex);
+    if(!g_tramDirty)
+        return;
+    g_visibleTramState = g_tramState;
+    g_tramDirty = false;
+}
+
+void TramButton(const char* label, const char* command)
+{
+    if(ImGui::Button(label))
+        QueueTramCommand(command);
+}
+
+void TramToggle(const char* label, bool& value, const char* command)
+{
+    if(ImGui::Checkbox(label, &value))
+        QueueTramCommand(std::string(command) + (value ? ":1" : ":0"));
+}
+
+void DrawTramBot(ImVec2 position, ImVec2 size, float scale)
+{
+    SyncTramState();
+    TramState& state = g_visibleTramState;
+    ImGui::SetCursorScreenPos(position);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * scale);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(4, 3, 12, 238));
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(48, 11, 78, 245));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(112, 25, 166, 255));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(174, 45, 232, 255));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(11, 4, 25, 245));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(52, 12, 81, 245));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(83, 18, 126, 255));
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, IM_COL32(225, 104, 255, 255));
+    ImGui::PushStyleColor(ImGuiCol_Separator, IM_COL32(128, 30, 188, 180));
+    ImGui::BeginChild("##tram_bot", size, ImGuiChildFlags_Borders);
+    ImGui::TextColored(ImVec4(0.88f, 0.42f, 1.0f, 1.0f),
+        "TRAMWAY BOT V6.6-df BY DROIDZERO");
+    ImGui::Text("Маршрут: %s | направление: %s | состояние: %s",
+        state.route.c_str(), state.direction.c_str(), state.status.c_str());
+    ImGui::Text("Заработано: %s р. | catcher: %s", state.money.c_str(),
+        state.catcher.c_str());
+    ImGui::Separator();
+
+    ImGui::SetNextItemWidth(80.0f * scale);
+    ImGui::InputInt("Светофор", &g_trafficState, 1, 1);
+    g_trafficState = std::clamp(g_trafficState, 0, 9);
+    ImGui::SameLine();
+    TramButton("Сохранить участок", "save_marker");
+    ImGui::SameLine();
+    if(ImGui::Button("Сохранить светофор"))
+        QueueTramCommand("save_traffic:" + std::to_string(g_trafficState));
+    ImGui::SameLine();
+    TramButton("Очистить таблицу", "clear_route");
+    ImGui::SameLine();
+    TramButton("Дамп таблицы", "dump_route");
+    ImGui::SameLine();
+    TramButton("Тест светофора", "test_traffic");
+
+    TramToggle("Игнорировать светофоры", state.traffic, "traffic");
+    ImGui::SameLine();
+    TramToggle("Отладка", state.debug, "debug");
+    ImGui::SameLine();
+    TramToggle("Сирена (ДТП/админ)", state.siren, "siren");
+    ImGui::SameLine();
+    TramToggle("Остановка на пробел", state.force, "force");
+    ImGui::SeparatorText("Быстрый выбор направления");
+
+    TramButton("ТП Мирка-3", "route:mirka3");
+    ImGui::SameLine();
+    TramButton("ТП Нева-100", "route:neva100");
+    ImGui::SameLine();
+    TramButton("ТП Прива-2", "route:priva2");
+    ImGui::SameLine();
+    TramButton("ТП Прива-7", "route:priva7");
+    ImGui::SameLine();
+    TramButton("ТП Мирка-8", "route:mirka8");
+    ImGui::SameLine();
+    TramButton("ТП Прива-8", "route:priva8");
+
+    TramButton("Калибровщик", "calibrate");
+    ImGui::SameLine();
+    TramButton("Тест сирены", "test_siren");
+    ImGui::SameLine();
+    TramButton("Стоп сейчас", "force_stop");
+    ImGui::EndChild();
+    ImGui::PopStyleColor(9);
+    ImGui::PopStyleVar();
+}
+
 void DrawThreadList(ImVec2 position, ImVec2 size, float scale)
 {
     SyncThreads();
@@ -669,6 +795,8 @@ void RenderMenu()
         extent(280.0f, 65.0f), g_activeTab == 1, draw, scale);
     DrawTab("##tab_threads", "Lua Threads", 2, point(735.0f, 421.0f),
         extent(280.0f, 65.0f), g_activeTab == 2, draw, scale);
+    DrawTab("##tab_tram", "TramBot", 3, point(1035.0f, 421.0f),
+        extent(280.0f, 65.0f), g_activeTab == 3, draw, scale);
 
     const ImVec2 contentPosition = point(105.0f, 495.0f);
     const ImVec2 contentSize = extent(1326.0f,
@@ -696,8 +824,10 @@ void RenderMenu()
             contentSize, ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_AllowTabInput);
         ImGui::PopStyleColor();
     }
-    else
+    else if(g_activeTab == 2)
         DrawThreadList(contentPosition, contentSize, scale);
+    else
+        DrawTramBot(contentPosition, contentSize, scale);
     ImGui::PopFont();
 
     if(g_activeTab == 0 && DrawActionButton("##inject_visual", "Inject",
@@ -712,6 +842,12 @@ void RenderMenu()
         std::scoped_lock lock(g_bridgeMutex);
         g_pendingUnload = g_selectedThread;
     }
+    else if(g_activeTab == 3 && DrawActionButton("##tram_toggle_visual",
+        g_visibleTramState.bot ? "Остановить бота" : "Запустить бота",
+        point(410.0f, 861.0f), extent(716.0f, 104.0f), draw, scale))
+    {
+        QueueTramCommand(g_visibleTramState.bot ? "bot:0" : "bot:1");
+    }
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
@@ -722,6 +858,7 @@ void RenderFrame(IDirect3DDevice9* device)
     if(!g_initialized && !InitializeGui(device))
         return;
     static bool toggleHeld{};
+    static bool tramHeld{};
     const bool toggleDown = (GetAsyncKeyState(VK_SHIFT) & 0x8000)
         && (GetAsyncKeyState('R') & 0x8000);
     if(toggleDown && !toggleHeld)
@@ -732,6 +869,16 @@ void RenderFrame(IDirect3DDevice9* device)
             g_clipCursor(nullptr);
     }
     toggleHeld = toggleDown;
+    const bool tramDown = (GetAsyncKeyState(VK_F5) & 0x8000) != 0;
+    if(tramDown && !tramHeld)
+    {
+        const bool close = g_visible.load() && g_activeTab == 3;
+        g_activeTab = 3;
+        g_visible.store(!close);
+        if(!close && g_clipCursor)
+            g_clipCursor(nullptr);
+    }
+    tramHeld = tramDown;
     if(!g_visible.load())
     {
         ImGui::GetIO().MouseDrawCursor = false;
@@ -1028,6 +1175,16 @@ bool GuiTakeUnloadThread(std::uintptr_t& id)
     return true;
 }
 
+bool GuiTakeTramCommand(std::string& command)
+{
+    std::scoped_lock lock(g_bridgeMutex);
+    if(g_tramCommands.empty())
+        return false;
+    command = std::move(g_tramCommands.front());
+    g_tramCommands.pop_front();
+    return true;
+}
+
 void GuiAddLuaThread(const GuiLuaThread& thread)
 {
     std::scoped_lock lock(g_bridgeMutex);
@@ -1071,4 +1228,37 @@ void GuiAppendEvent(std::string_view event)
         g_eventText.erase(0, newline == std::string::npos ? excess : newline + 1);
     }
     g_eventsDirty = true;
+}
+
+void GuiUpdateTramState(std::string_view key, std::string_view value)
+{
+    const bool enabled = value == "1" || value == "true";
+    std::scoped_lock lock(g_bridgeMutex);
+    if(key == "loaded") g_tramState.loaded = enabled;
+    else if(key == "bot") g_tramState.bot = enabled;
+    else if(key == "traffic") g_tramState.traffic = enabled;
+    else if(key == "debug") g_tramState.debug = enabled;
+    else if(key == "siren") g_tramState.siren = enabled;
+    else if(key == "force") g_tramState.force = enabled;
+    else if(key == "route") g_tramState.route = value;
+    else if(key == "direction") g_tramState.direction = value;
+    else if(key == "status") g_tramState.status = value;
+    else if(key == "money") g_tramState.money = value;
+    else if(key == "catcher") g_tramState.catcher = value;
+    else return;
+    g_tramDirty = true;
+}
+
+void GuiResetTramState()
+{
+    std::scoped_lock lock(g_bridgeMutex);
+    g_tramState = {};
+    g_tramState.siren = true;
+    g_tramState.route = "не выбран";
+    g_tramState.direction = "forward";
+    g_tramState.status = "ожидание ресурса";
+    g_tramState.money = "0";
+    g_tramState.catcher = "не зарегистрирован";
+    g_tramCommands.clear();
+    g_tramDirty = true;
 }

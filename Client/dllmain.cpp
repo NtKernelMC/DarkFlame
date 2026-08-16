@@ -134,14 +134,6 @@ bool InitializeRuntime()
     if(!StartForensicHooks(GetModuleHandleW(L"client.dll"), g_loaderDirectory))
         Log::Write(L"[process-filter] early hook startup failed");
 
-    const HMODULE client = GetModuleHandleW(L"client.dll");
-    if(client && !g_clientLogged.exchange(true))
-    {
-        Log::Write(L"[loader] client.dll found");
-        ScheduleClientDump(client);
-        StartLuaArgsHook(client, g_loaderDirectory);
-    }
-
     const HMODULE netc = GetModuleHandleW(L"netc.dll");
     if (netc && !InstallNetcHooks(netc))
     {
@@ -149,6 +141,14 @@ bool InitializeRuntime()
         RemoveLoaderHook();
         MH_Uninitialize();
         return false;
+    }
+
+    const HMODULE client = GetModuleHandleW(L"client.dll");
+    if(client && !g_clientLogged.exchange(true))
+    {
+        Log::Write(L"[loader] client.dll found");
+        ScheduleClientDump(client);
+        StartLuaArgsHook(client, g_loaderDirectory);
     }
 
     Log::Write(L"[bootstrap] DarkFlameClient ready before gta_sa.exe resume");
