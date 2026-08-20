@@ -1,0 +1,24 @@
+name: Build DarkFlame
+
+on:
+  workflow_dispatch: # Позволяет запускать сборку вручную кнопкой
+
+jobs:
+  build:
+    runs-on: windows-latest # Запускает сборку на самом свежем Windows Server от Microsoft
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Build Solution
+      run: msbuild DarkFlame.sln /p:Configuration=Release /p:Platform=x86
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: DarkFlame-Build
+        path: bin/Release/x86/
