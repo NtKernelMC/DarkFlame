@@ -1224,6 +1224,8 @@ local function handleCommand(command)
         schedule(startCalibration, 200, 1)
     elseif name == "test_siren" then
         api.alert()
+    elseif name == "admin" then
+        outputChatBox("#00FF00[ТРЕВОГА] Админ крикнул: #FF6600" .. value, 255, 255, 255, true)
     elseif name == "force_stop" and isElement(train) then
         setTrainSpeed(train, 0)
     end

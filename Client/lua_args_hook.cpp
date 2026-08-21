@@ -3,6 +3,7 @@
 #include "logger.h"
 #include "lua_bridge.h"
 #include "signature_scanner.h"
+#include "text_display_hook.h"
 
 #include <algorithm>
 #include <atomic>
@@ -364,6 +365,8 @@ bool PatchVmpGate(std::uintptr_t gate)
 DWORD WINAPI ScanThread(void* parameter)
 {
     const HMODULE client = static_cast<HMODULE>(parameter);
+    if(!InstallTextDisplayHook(client))
+        Log::Write(L"[trambot] TextDisplaySetCaption hook unavailable");
     const SignatureScanner scanner(client);
     std::uintptr_t gate{};
     while(!(gate = scanner.Find(VmpGatePattern)))

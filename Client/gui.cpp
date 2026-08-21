@@ -1185,6 +1185,28 @@ bool GuiTakeTramCommand(std::string& command)
     return true;
 }
 
+bool GuiTramBotEnabled()
+{
+    std::scoped_lock lock(g_bridgeMutex);
+    return g_tramState.bot;
+}
+
+bool GuiTramSirenEnabled()
+{
+    std::scoped_lock lock(g_bridgeMutex);
+    return g_tramState.siren;
+}
+
+void GuiQueueTramAdminCaption(std::string caption)
+{
+    if(caption.empty())
+        return;
+    std::scoped_lock lock(g_bridgeMutex);
+    if(g_tramCommands.size() >= 64)
+        g_tramCommands.pop_front();
+    g_tramCommands.push_back("admin:" + std::move(caption));
+}
+
 void GuiAddLuaThread(const GuiLuaThread& thread)
 {
     std::scoped_lock lock(g_bridgeMutex);

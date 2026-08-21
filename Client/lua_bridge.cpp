@@ -986,53 +986,7 @@ int __cdecl DirectEmulateKey(void* lua)
 
 int __cdecl DirectPlayAlertSignal(void* lua)
 {
-    static const std::vector<std::uint8_t> sound = []
-    {
-        constexpr std::uint32_t rate = 22050;
-        constexpr std::uint32_t samples = rate * 6 / 5;
-        constexpr double pi = 3.14159265358979323846;
-        std::vector<std::uint8_t> wave;
-        wave.reserve(44 + samples * 2);
-        const auto bytes = [&](std::uint32_t value, unsigned count)
-        {
-            for(unsigned index = 0; index < count; ++index)
-                wave.push_back(static_cast<std::uint8_t>(value >> (index * 8)));
-        };
-        wave.insert(wave.end(), {'R', 'I', 'F', 'F'});
-        bytes(36 + samples * 2, 4);
-        wave.insert(wave.end(), {'W', 'A', 'V', 'E', 'f', 'm', 't', ' '});
-        bytes(16, 4);
-        bytes(1, 2);
-        bytes(1, 2);
-        bytes(rate, 4);
-        bytes(rate * 2, 4);
-        bytes(2, 2);
-        bytes(16, 2);
-        wave.insert(wave.end(), {'d', 'a', 't', 'a'});
-        bytes(samples * 2, 4);
-        for(std::uint32_t index = 0; index < samples; ++index)
-        {
-            const double time = static_cast<double>(index) / rate;
-            const double phase = std::fmod(time, 0.15);
-            const unsigned pulse = static_cast<unsigned>(time / 0.15);
-            const double frequency = pulse % 2 ? 660.0 : 990.0;
-            const double edge = std::min({phase * 30.0,
-                (0.15 - phase) * 30.0, 1.0});
-            const auto sample = static_cast<std::int16_t>(std::sin(
-                2.0 * pi * frequency * time) * 15000.0 * edge);
-            bytes(static_cast<std::uint16_t>(sample), 2);
-        }
-        return wave;
-    }();
-    HWND window = ProcessWindow();
-    if(window)
-    {
-        FLASHWINFO flash{sizeof(flash), window, FLASHW_TRAY, 3, 0};
-        FlashWindowEx(&flash);
-    }
-    return PushDirectResult(lua, PlaySoundA(reinterpret_cast<LPCSTR>(
-        sound.data()), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT)
-        != FALSE);
+    return PushDirectResult(lua, PlayTramAlertSignal());
 }
 
 int DirectDebugHook(void* lua, bool add)
@@ -2069,6 +2023,56 @@ std::uintptr_t Find(const SignatureScanner& scanner, std::string_view pattern,
     Log::Scan(name, address ? L"found" : L"not_found", address);
     return address;
 }
+}
+
+bool PlayTramAlertSignal()
+{
+    static const std::vector<std::uint8_t> sound = []
+    {
+        constexpr std::uint32_t rate = 22050;
+        constexpr std::uint32_t samples = rate * 6 / 5;
+        constexpr double pi = 3.14159265358979323846;
+        std::vector<std::uint8_t> wave;
+        wave.reserve(44 + samples * 2);
+        const auto bytes = [&](std::uint32_t value, unsigned count)
+        {
+            for(unsigned index = 0; index < count; ++index)
+                wave.push_back(static_cast<std::uint8_t>(value >> (index * 8)));
+        };
+        wave.insert(wave.end(), {'R', 'I', 'F', 'F'});
+        bytes(36 + samples * 2, 4);
+        wave.insert(wave.end(), {'W', 'A', 'V', 'E', 'f', 'm', 't', ' '});
+        bytes(16, 4);
+        bytes(1, 2);
+        bytes(1, 2);
+        bytes(rate, 4);
+        bytes(rate * 2, 4);
+        bytes(2, 2);
+        bytes(16, 2);
+        wave.insert(wave.end(), {'d', 'a', 't', 'a'});
+        bytes(samples * 2, 4);
+        for(std::uint32_t index = 0; index < samples; ++index)
+        {
+            const double time = static_cast<double>(index) / rate;
+            const double phase = std::fmod(time, 0.15);
+            const unsigned pulse = static_cast<unsigned>(time / 0.15);
+            const double frequency = pulse % 2 ? 660.0 : 990.0;
+            const double edge = std::min({phase * 30.0,
+                (0.15 - phase) * 30.0, 1.0});
+            const auto sample = static_cast<std::int16_t>(std::sin(
+                2.0 * pi * frequency * time) * 15000.0 * edge);
+            bytes(static_cast<std::uint16_t>(sample), 2);
+        }
+        return wave;
+    }();
+    HWND window = ProcessWindow();
+    if(window)
+    {
+        FLASHWINFO flash{sizeof(flash), window, FLASHW_TRAY, 3, 0};
+        FlashWindowEx(&flash);
+    }
+    return PlaySoundA(reinterpret_cast<LPCSTR>(sound.data()), nullptr,
+        SND_MEMORY | SND_ASYNC | SND_NODEFAULT) != FALSE;
 }
 
 void NotifyTramResourceScriptSeen(std::string_view path)
