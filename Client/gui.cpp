@@ -1,6 +1,7 @@
 #include "gui.h"
 
 #include "logger.h"
+#include "lua_bridge.h"
 #include "resource.h"
 
 #include <MinHook.h>
@@ -852,6 +853,7 @@ void RenderMenu()
 
 void RenderFrame(IDirect3DDevice9* device)
 {
+    PulseLuaBridge();
     if(!g_initialized && !InitializeGui(device))
         return;
     static bool toggleHeld{};

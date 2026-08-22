@@ -37,7 +37,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;UNICODE;_UNICODE;NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;UNICODE;_UNICODE;NOMINMAX;WIN32_LEAN_AND_MEAN;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
@@ -56,6 +56,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="embedded_lua_loader.c"><CompileAs>CompileAsC</CompileAs></ClCompile>
+    <ClCompile Include="embedded_lua_runtime.c"><CompileAs>CompileAsC</CompileAs></ClCompile>
+    <ClCompile Include="embedded_lua_selftest.c"><CompileAs>CompileAsC</CompileAs></ClCompile>
     <ClCompile Include="forensic_hooks.cpp" />
     <ClCompile Include="gui.cpp" />
     <ClCompile Include="dllmain.cpp" />
@@ -67,6 +70,23 @@
     <ClCompile Include="privacy_hooks.cpp" />
     <ClCompile Include="signature_scanner.cpp" />
     <ClCompile Include="text_display_hook.cpp" />
+    <ClCompile Include="third_party\mta_lua\lapi.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\lcode.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\ldebug.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\ldo.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\lfunc.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\lgc.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\llex.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\lmem.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\lobject.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\lopcodes.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\lparser.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\lstate.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\lstring.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\ltable.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\ltm.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\lvm.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\mta_lua\lzio.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="third_party\imgui\imgui.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="third_party\imgui\imgui_draw.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="third_party\imgui\imgui_tables.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
@@ -80,6 +100,36 @@
     <ClCompile Include="..\Agent\third_party\minhook\hde\hde32.c"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="embedded_lua_loader.h" />
+    <ClInclude Include="embedded_lua_runtime.h" />
+    <ClInclude Include="third_party\mta_lua\lapi.h" />
+    <ClInclude Include="third_party\mta_lua\lauxlib.h" />
+    <ClInclude Include="third_party\mta_lua\lcode.h" />
+    <ClInclude Include="third_party\mta_lua\ldebug.h" />
+    <ClInclude Include="third_party\mta_lua\ldo.h" />
+    <ClInclude Include="third_party\mta_lua\lfunc.h" />
+    <ClInclude Include="third_party\mta_lua\lgc.h" />
+    <ClInclude Include="third_party\mta_lua\llex.h" />
+    <ClInclude Include="third_party\mta_lua\llimits.h" />
+    <ClInclude Include="third_party\mta_lua\lmem.h" />
+    <ClInclude Include="third_party\mta_lua\lobject.h" />
+    <ClInclude Include="third_party\mta_lua\lopcodes.h" />
+    <ClInclude Include="third_party\mta_lua\lparser.h" />
+    <ClInclude Include="third_party\mta_lua\lstate.h" />
+    <ClInclude Include="third_party\mta_lua\lstring.h" />
+    <ClInclude Include="third_party\mta_lua\ltable.h" />
+    <ClInclude Include="third_party\mta_lua\ltm.h" />
+    <ClInclude Include="third_party\mta_lua\lua.h" />
+    <ClInclude Include="third_party\mta_lua\luaconf.h" />
+    <ClInclude Include="third_party\mta_lua\lualib.h" />
+    <ClInclude Include="third_party\mta_lua\lundump.h" />
+    <ClInclude Include="third_party\mta_lua\lvm.h" />
+    <ClInclude Include="third_party\mta_lua\lzio.h" />
+    <ClInclude Include="third_party\mta_lua\unidata.h" />
+    <ClInclude Include="lua_bridge_bootstrap.h" />
+    <ClInclude Include="lua_bridge_signatures.h" />
+    <ClInclude Include="lua_bridge_utils.h" />
+    <ClInclude Include="memory_utils.h" />
     <ClInclude Include="forensic_hooks.h" />
     <ClInclude Include="gui.h" />
     <ClInclude Include="logger.h" />

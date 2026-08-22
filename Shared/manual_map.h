@@ -23,6 +23,7 @@ struct LoaderData
     IMAGE_IMPORT_DESCRIPTOR* imports;
     LoadLibraryAFn loadLibrary;
     GetProcAddressFn getProcAddress;
+    void* reserved;
 };
 
 #pragma optimize("", off)
@@ -97,7 +98,8 @@ __declspec(noinline) DWORD WINAPI LoadImage(void* parameter)
     if (!entryRva)
         return TRUE;
     const auto entry = reinterpret_cast<DllMainFn>(data->image + entryRva);
-    return entry(reinterpret_cast<HMODULE>(data->image), DLL_PROCESS_ATTACH, nullptr);
+    return entry(reinterpret_cast<HMODULE>(data->image), DLL_PROCESS_ATTACH,
+        data->reserved);
 }
 #pragma code_seg(pop)
 
@@ -141,9 +143,11 @@ inline bool ReadImage(const std::wstring& path, std::vector<BYTE>& bytes)
 }
 }
 
-inline bool Map(HANDLE process, const std::wstring& path)
+inline bool Map(HANDLE process, const std::wstring& path,
+    const void* parameter = nullptr, SIZE_T parameterSize = 0)
 {
-    if (!process || path.empty())
+    if (!process || path.empty() || (!parameter && parameterSize)
+        || (parameter && !parameterSize))
     {
         SetLastError(ERROR_INVALID_PARAMETER);
         return false;
@@ -239,6 +243,22 @@ inline bool Map(HANDLE process, const std::wstring& path)
     }
 
     const auto& importDirectory = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    void* remoteParameter{};
+    if (parameterSize)
+    {
+        remoteParameter = VirtualAllocEx(process, nullptr, parameterSize,
+            MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (!remoteParameter)
+            return fail(GetLastError());
+        if (!WriteProcessMemory(process, remoteParameter, parameter,
+            parameterSize, nullptr))
+        {
+            const DWORD error = GetLastError();
+            VirtualFreeEx(process, remoteParameter, 0, MEM_RELEASE);
+            return fail(error);
+        }
+    }
+
     Detail::LoaderData data{};
     data.image = static_cast<BYTE*>(remoteImage);
     data.ntHeaders = reinterpret_cast<IMAGE_NT_HEADERS32*>(
@@ -249,6 +269,7 @@ inline bool Map(HANDLE process, const std::wstring& path)
         ? reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(data.image + importDirectory.VirtualAddress) : nullptr;
     data.loadLibrary = &LoadLibraryA;
     data.getProcAddress = &GetProcAddress;
+    data.reserved = remoteParameter;
 
     const auto loaderStart = reinterpret_cast<const BYTE*>(&Detail::LoadImage);
     const auto loaderEnd = reinterpret_cast<const BYTE*>(&Detail::LoadImageEnd);
@@ -259,11 +280,18 @@ inline bool Map(HANDLE process, const std::wstring& path)
     void* remoteLoader = VirtualAllocEx(process, nullptr, allocationSize,
         MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!remoteLoader)
-        return fail(GetLastError());
+    {
+        const DWORD error = GetLastError();
+        if (remoteParameter)
+            VirtualFreeEx(process, remoteParameter, 0, MEM_RELEASE);
+        return fail(error);
+    }
 
     auto cleanup = [&](DWORD error, bool releaseImage)
     {
         VirtualFreeEx(process, remoteLoader, 0, MEM_RELEASE);
+        if (remoteParameter)
+            VirtualFreeEx(process, remoteParameter, 0, MEM_RELEASE);
         if (releaseImage)
             VirtualFreeEx(process, remoteImage, 0, MEM_RELEASE);
         SetLastError(error);
@@ -300,6 +328,8 @@ inline bool Map(HANDLE process, const std::wstring& path)
     }
 
     VirtualFreeEx(process, remoteLoader, 0, MEM_RELEASE);
+    if (remoteParameter)
+        VirtualFreeEx(process, remoteParameter, 0, MEM_RELEASE);
     SetLastError(ERROR_SUCCESS);
     return true;
 }

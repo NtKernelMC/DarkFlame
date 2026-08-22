@@ -50,7 +50,6 @@ IDirect3DTexture9* g_background{};
 IDirect3DTexture9* g_banner{};
 ImFont* g_titleFont{};
 ImFont* g_regularFont{};
-ImFont* g_buttonFont{};
 ImFont* g_codeFont{};
 ImFont* g_serialFont{};
 std::wstring g_directory;
@@ -290,15 +289,12 @@ void ConfigureFonts()
         "C:\\Windows\\Fonts\\segoeuib.ttf", 23.0f, nullptr, glyphs);
     g_regularFont = io.Fonts->AddFontFromFileTTF(
         "C:\\Windows\\Fonts\\segoeui.ttf", 19.0f, nullptr, glyphs);
-    g_buttonFont = io.Fonts->AddFontFromFileTTF(
-        "C:\\Windows\\Fonts\\segoeuib.ttf", 30.0f, nullptr, glyphs);
     g_codeFont = io.Fonts->AddFontFromFileTTF(
         "C:\\Windows\\Fonts\\consola.ttf", 16.0f, nullptr, glyphs);
     g_serialFont = io.Fonts->AddFontFromFileTTF(
         "C:\\Windows\\Fonts\\consolab.ttf", 21.0f, nullptr, glyphs);
     if(!g_titleFont) g_titleFont = fallback;
     if(!g_regularFont) g_regularFont = fallback;
-    if(!g_buttonFont) g_buttonFont = fallback;
     if(!g_codeFont) g_codeFont = fallback;
     if(!g_serialFont) g_serialFont = g_codeFont;
 }
@@ -333,47 +329,7 @@ void DrawPanel(ImDrawList* draw, ImVec2 topLeft, ImVec2 size)
         IM_COL32(75, 18, 111, 150), 6.0f);
 }
 
-bool DrawActionButton(const char* label, ImVec2 position, ImVec2 size,
-    bool enabled, ImDrawList* draw)
-{
-    ImGui::SetCursorScreenPos(position);
-    ImGui::BeginDisabled(!enabled);
-    const bool clicked = ImGui::InvisibleButton("##launch", size);
-    const bool hovered = enabled && ImGui::IsItemHovered();
-    ImGui::EndDisabled();
-    const ImU32 border = enabled
-        ? hovered ? IM_COL32(242, 124, 255, 255) : IM_COL32(192, 67, 245, 245)
-        : IM_COL32(83, 55, 96, 190);
-    draw->AddRectFilled(position, {position.x + size.x, position.y + size.y},
-        enabled ? IM_COL32(13, 4, 27, 245) : IM_COL32(11, 8, 16, 235), 13.0f);
-    draw->AddRect(position, {position.x + size.x, position.y + size.y}, border,
-        13.0f, 0, 3.0f);
-    const float fontSize = g_buttonFont->LegacySize;
-    const ImVec2 textSize = g_buttonFont->CalcTextSizeA(fontSize,
-        FLT_MAX, 0.0f, label);
-    draw->AddText(g_buttonFont, fontSize,
-        {position.x + (size.x - textSize.x) * 0.5f,
-        position.y + (size.y - textSize.y) * 0.45f},
-        enabled ? IM_COL32(252, 238, 255, 255) : IM_COL32(112, 99, 122, 255),
-        label);
-    for(int side : {-1, 1})
-    {
-        const float base = side < 0 ? position.x + 55.0f
-            : position.x + size.x - 55.0f;
-        for(int index{}; index < 3; ++index)
-        {
-            const float offset = index * 11.0f * side;
-            draw->AddLine({base + offset - 7.0f * side, position.y + size.y * 0.37f},
-                {base + offset, position.y + size.y * 0.5f}, border, 2.5f);
-            draw->AddLine({base + offset, position.y + size.y * 0.5f},
-                {base + offset - 7.0f * side, position.y + size.y * 0.63f},
-                border, 2.5f);
-        }
-    }
-    return clicked && enabled;
-}
-
-void StartLaunch()
+void StartPolling()
 {
     if(g_launchState.load(std::memory_order_acquire) == LaunchState::Running)
         return;
@@ -386,12 +342,11 @@ void StartLaunch()
     if(g_worker.joinable())
         g_worker.join();
     SaveConfig();
-    const DarkFlameConfig config = g_config;
     g_launchState.store(LaunchState::Running, std::memory_order_release);
-    AppendLog(L"[loader] launch requested");
-    g_worker = std::jthread([config](std::stop_token stop)
+    AppendLog(L"[loader] automatic process polling started");
+    g_worker = std::jthread([](std::stop_token stop)
     {
-        const int result = Launcher::Run(config, stop, [](std::wstring_view line)
+        const int result = Launcher::Run(stop, [](std::wstring_view line)
         {
             AppendLog(line);
         });
@@ -539,26 +494,14 @@ void DrawWindow()
     draw->AddLine(crossC, crossD, closeColor, 2.5f);
 
     const ImVec2 settings{origin.x + 58.0f, origin.y + 326.0f};
-    const ImVec2 settingsSize{480.0f, 350.0f};
+    const ImVec2 settingsSize{480.0f, 405.0f};
     const ImVec2 memo{origin.x + 555.0f, origin.y + 326.0f};
-    const ImVec2 memoSize{539.0f, 350.0f};
+    const ImVec2 memoSize{539.0f, 405.0f};
     DrawPanel(draw, settings, settingsSize);
     DrawPanel(draw, memo, memoSize);
     DrawSettings(settings, settingsSize);
     DrawMemo(memo, memoSize);
 
-    const LaunchState state = g_launchState.load(std::memory_order_acquire);
-    const bool valid = !g_config.setSerial || Config::ValidSerial(g_serial.data());
-    const bool enabled = state != LaunchState::Running
-        && state != LaunchState::Success && valid;
-    const char* label = state == LaunchState::Running ? "Launching..."
-        : state == LaunchState::Success ? "Loaded"
-        : state == LaunchState::Failed ? "Retry" : "Launch";
-    if(DrawActionButton(label, {origin.x + 426.0f, origin.y + 685.0f},
-        {300.0f, 46.0f}, enabled, draw))
-    {
-        StartLaunch();
-    }
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar();
@@ -728,6 +671,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
         AppendLog(L"[warn] invalid PUBLIC_SERIAL replaced with the default value");
     ShowWindow(g_window, SW_SHOWDEFAULT);
     UpdateWindow(g_window);
+    StartPolling();
     MSG message{};
     while(message.message != WM_QUIT)
     {

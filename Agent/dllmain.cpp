@@ -18,6 +18,37 @@ namespace
     CreateProcessWFn g_createProcessW{};
     HANDLE g_clientLoadedEvent{};
 
+    bool ApplyBootstrap(const void* reserved)
+    {
+        if(!reserved)
+            return false;
+        const auto data = *static_cast<const BootstrapProtocol::Data*>(reserved);
+        if(data.magic != BootstrapProtocol::DataMagic
+            || data.version != BootstrapProtocol::DataVersion)
+        {
+            return false;
+        }
+
+        return SetEnvironmentVariableW(BootstrapProtocol::LogDirectoryVariable,
+                data.logDirectory)
+            && SetEnvironmentVariableW(BootstrapProtocol::AgentPathVariable,
+                data.agentPath)
+            && SetEnvironmentVariableW(BootstrapProtocol::ClientPathVariable,
+                data.clientPath)
+            && SetEnvironmentVariableW(BootstrapProtocol::AgentReadyEventVariable,
+                data.agentReadyEvent)
+            && SetEnvironmentVariableW(BootstrapProtocol::ClientLoadedEventVariable,
+                data.clientLoadedEvent)
+            && SetEnvironmentVariableW(BootstrapProtocol::AntiShadowVariable,
+                data.antiShadow ? L"1" : L"0")
+            && SetEnvironmentVariableW(BootstrapProtocol::SetSerialVariable,
+                data.setSerial ? L"1" : L"0")
+            && SetEnvironmentVariableW(BootstrapProtocol::RandomSerialVariable,
+                data.randomSerial ? L"1" : L"0")
+            && SetEnvironmentVariableW(BootstrapProtocol::PublicSerialVariable,
+                data.publicSerial);
+    }
+
     void ClearBootstrapEnvironment()
     {
         Environment::Clear(BootstrapProtocol::LogDirectoryVariable);
@@ -139,11 +170,13 @@ namespace
     }
 }
 
-BOOL WINAPI DllMain(HMODULE module, DWORD reason, void*)
+BOOL WINAPI DllMain(HMODULE module, DWORD reason, void* reserved)
 {
     if (reason == DLL_PROCESS_ATTACH)
     {
         DisableThreadLibraryCalls(module);
+        if(!ApplyBootstrap(reserved))
+            return FALSE;
         RuntimeLog::Write(L"[agent] DllMain attached");
         const std::wstring agentPath = Environment::Read(BootstrapProtocol::AgentPathVariable);
         if (!CrashHandler::Install(module, agentPath, L"DarkFlameAgent"))

@@ -10,40 +10,41 @@
 class BootstrapIpc
 {
 public:
-    BootstrapIpc(const std::wstring& logDirectory, const std::wstring& agentPath,
-        const std::wstring& clientPath, const DarkFlameConfig& config)
+    BootstrapIpc(const std::wstring& logDirectory,
+        const std::wstring& agentPath, const std::wstring& clientPath,
+        const DarkFlameConfig& config)
     {
         const std::wstring suffix = std::to_wstring(GetCurrentProcessId())
             + L"-" + std::to_wstring(GetTickCount64());
         const std::wstring readyName = L"Local\\DarkFlameAgentReady-" + suffix;
         const std::wstring loadedName = L"Local\\DarkFlameClientLoaded-" + suffix;
+        const std::wstring publicSerial(config.publicSerial.begin(),
+            config.publicSerial.end());
+
+        m_data.magic = BootstrapProtocol::DataMagic;
+        m_data.version = BootstrapProtocol::DataVersion;
+        m_data.antiShadow = config.antiShadow;
+        m_data.setSerial = config.setSerial;
+        m_data.randomSerial = config.randomSerial;
+        if(!Copy(m_data.logDirectory, logDirectory)
+            || !Copy(m_data.agentPath, agentPath)
+            || !Copy(m_data.clientPath, clientPath)
+            || !Copy(m_data.agentReadyEvent, readyName)
+            || !Copy(m_data.clientLoadedEvent, loadedName)
+            || !Copy(m_data.publicSerial, publicSerial))
+        {
+            m_error = ERROR_BUFFER_OVERFLOW;
+            return;
+        }
 
         m_ready = CreateEventW(nullptr, TRUE, FALSE, readyName.c_str());
-        if (!m_ready)
+        if(!m_ready)
         {
             m_error = GetLastError();
             return;
         }
         m_loaded = CreateEventW(nullptr, TRUE, FALSE, loadedName.c_str());
-        if (!m_loaded)
-        {
-            m_error = GetLastError();
-            return;
-        }
-        const std::wstring publicSerial(config.publicSerial.begin(), config.publicSerial.end());
-        if (!SetEnvironmentVariableW(BootstrapProtocol::LogDirectoryVariable, logDirectory.c_str())
-            || !SetEnvironmentVariableW(BootstrapProtocol::AgentPathVariable, agentPath.c_str())
-            || !SetEnvironmentVariableW(BootstrapProtocol::ClientPathVariable, clientPath.c_str())
-            || !SetEnvironmentVariableW(BootstrapProtocol::AgentReadyEventVariable, readyName.c_str())
-            || !SetEnvironmentVariableW(BootstrapProtocol::ClientLoadedEventVariable, loadedName.c_str())
-            || !SetEnvironmentVariableW(BootstrapProtocol::AntiShadowVariable,
-                config.antiShadow ? L"1" : L"0")
-            || !SetEnvironmentVariableW(BootstrapProtocol::SetSerialVariable,
-                config.setSerial ? L"1" : L"0")
-            || !SetEnvironmentVariableW(BootstrapProtocol::RandomSerialVariable,
-                config.randomSerial ? L"1" : L"0")
-            || !SetEnvironmentVariableW(BootstrapProtocol::PublicSerialVariable,
-                publicSerial.c_str()))
+        if(!m_loaded)
         {
             m_error = GetLastError();
             return;
@@ -53,10 +54,9 @@ public:
 
     ~BootstrapIpc()
     {
-        ClearEnvironment();
-        if (m_ready)
+        if(m_ready)
             CloseHandle(m_ready);
-        if (m_loaded)
+        if(m_loaded)
             CloseHandle(m_loaded);
     }
 
@@ -67,20 +67,18 @@ public:
     DWORD Error() const { return m_error; }
     HANDLE ReadyEvent() const { return m_ready; }
     HANDLE ClientLoadedEvent() const { return m_loaded; }
-    void ClearEnvironment()
-    {
-        SetEnvironmentVariableW(BootstrapProtocol::LogDirectoryVariable, nullptr);
-        SetEnvironmentVariableW(BootstrapProtocol::AgentPathVariable, nullptr);
-        SetEnvironmentVariableW(BootstrapProtocol::ClientPathVariable, nullptr);
-        SetEnvironmentVariableW(BootstrapProtocol::AgentReadyEventVariable, nullptr);
-        SetEnvironmentVariableW(BootstrapProtocol::ClientLoadedEventVariable, nullptr);
-        SetEnvironmentVariableW(BootstrapProtocol::AntiShadowVariable, nullptr);
-        SetEnvironmentVariableW(BootstrapProtocol::SetSerialVariable, nullptr);
-        SetEnvironmentVariableW(BootstrapProtocol::RandomSerialVariable, nullptr);
-        SetEnvironmentVariableW(BootstrapProtocol::PublicSerialVariable, nullptr);
-    }
+    const BootstrapProtocol::Data& Payload() const { return m_data; }
 
 private:
+    template<std::size_t Size>
+    static bool Copy(wchar_t (&destination)[Size], const std::wstring& source)
+    {
+        if(source.size() >= Size)
+            return false;
+        return wcscpy_s(destination, source.c_str()) == 0;
+    }
+
+    BootstrapProtocol::Data m_data{};
     HANDLE m_ready{};
     HANDLE m_loaded{};
     DWORD m_error{};

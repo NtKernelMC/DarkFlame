@@ -1,7 +1,13 @@
 #include "lua_bridge.h"
 
+#include "embedded_lua_loader.h"
+#include "embedded_lua_runtime.h"
 #include "gui.h"
 #include "logger.h"
+#include "lua_bridge_bootstrap.h"
+#include "lua_bridge_signatures.h"
+#include "lua_bridge_utils.h"
+#include "memory_utils.h"
 #include "netc_hooks.h"
 #include "signature_scanner.h"
 
@@ -12,14 +18,12 @@
 #include <array>
 #include <atomic>
 #include <charconv>
-#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <iterator>
-#include <limits>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -29,204 +33,14 @@
 
 namespace
 {
-constexpr int LuaGlobalsIndex = -10002;
+using namespace LuaBridgeSignatures;
+using namespace LuaBridgeUtil;
+using namespace MemoryUtil;
+
 constexpr int LuaRegistryIndex = -10000;
-constexpr std::string_view IsNameAllowedPattern =
-    "55 8B EC 8B 4D ? B8 ? ? ? ? 53 56 33 DB";
-constexpr std::string_view CallHookPattern =
-    "55 8B EC 6A ? 68 ? ? ? ? 64 A1 ? ? ? ? 50 81 EC ? ? ? ? A1 ? ? ? ? "
-    "33 C5 89 45 ? 53 56 57 50 8D 45 ? 64 A3 ? ? ? ? 80 3D";
-constexpr std::string_view LuaPCallPattern =
-    "55 8B EC 83 EC ? 53 8B 5D ? 56 8B 75 ? 57 8D 43";
-constexpr std::string_view LuaPushCClosurePattern =
-    "55 8B EC 56 8B 75 ? 8B 4E ? 8B 41 ? 3B 41 ? 72 ? 56 E8 ? ? ? ? "
-    "83 C4 ? 8B 46 ? 2B 46";
-constexpr std::string_view LuaSetFieldPattern =
-    "55 8B EC 83 EC ? 53 56 8B 75 ? 57 8B 46 ? 2B 46";
-constexpr std::string_view LuaPushBooleanPattern =
-    "55 8B EC 8B 55 ? 33 C0 39 45";
-constexpr std::string_view LuaToBooleanPattern =
-    "55 8B EC FF 75 ? FF 75 ? E8 ? ? ? ? 83 C4 ? 8B 48 ? 85 C9";
-constexpr std::string_view LuaToLStringPattern =
-    "55 8B EC 56 FF 75 ? 8B 75 ? 56 E8 ? ? ? ? 8B C8";
-constexpr std::string_view LuaPushStringPattern =
-    "55 8B EC 8B 45 ? 85 C0 75 ? 8B 55";
-constexpr std::string_view LuaGetTopPattern =
-    "55 8B EC 8B 4D ? 8B 41 ? 2B 41 ? C1 F8";
-constexpr std::string_view LuaGetFieldPattern =
-    "55 8B EC 83 EC ? 56 8B 75 ? 57 FF 75";
-constexpr std::string_view LuaSetTopPattern =
-    "55 8B EC 8B 55 ? 56 8B 75 ? 57 8B 7A";
-constexpr std::string_view LuaNewThreadPattern =
-    "55 8B EC 56 8B 75 ? 8B 4E ? 8B 41 ? 3B 41 ? 72 ? 56 E8 ? ? ? ? "
-    "83 C4 ? 56";
-constexpr std::string_view LuaLRefPattern =
-    "55 8B EC 56 8B 75 ? 57 8B 7D ? 8D 87 ? ? ? ? 3D ? ? ? ? 77 ? "
-    "56 E8 ? ? ? ? 47 83 C4 ? 03 F8 6A";
-constexpr std::string_view LuaLUnrefPattern =
-    "55 8B EC 53 8B 5D ? 85 DB 78";
-constexpr std::string_view LuaFunctionRegistryPattern =
-    "55 8B EC 83 EC ? 56 8B 75 ? 3B 35";
-constexpr std::string_view GetVirtualMachinePattern =
-    "55 8B EC 83 EC ? 53 57 8B 7D ? 8B D9 85 FF";
-constexpr std::string_view LuaManagerLoadPattern =
-    "8B 0D ? ? ? ? 57 C7 45 ? ? ? ? ? E8 ? ? ? ? 85 C0 0F 84 ? ? ? ? "
-    "83 78 ? ?";
-constexpr std::string_view AddDebugHookPattern =
-    "55 8B EC 6A ? 68 ? ? ? ? 64 A1 ? ? ? ? 50 81 EC ? ? ? ? A1 ? ? ? ? "
-    "33 C5 89 45 ? 53 56 57 50 8D 45 ? 64 A3 ? ? ? ? 8B 45 ? 8B 55";
-constexpr std::string_view RemoveDebugHookPattern =
-    "55 8B EC A1 ? ? ? ? 53 56 57 8B B0";
-constexpr std::string_view LuaMToRefPattern =
-    "55 8B EC 83 EC ? A1 ? ? ? ? 56 8B 75";
-constexpr std::string_view LuaFunctionRefDtorPattern =
-    "55 8B EC 6A ? 68 ? ? ? ? 64 A1 ? ? ? ? 50 56 A1 ? ? ? ? 33 C5 50 "
-    "8D 45 ? 64 A3 ? ? ? ? 8B F1 FF 76 ? FF 76";
-constexpr std::string_view LuaTypePattern =
-    "55 8B EC FF 75 ? FF 75 ? E8 ? ? ? ? 83 C4 ? 3D ? ? ? ? 75";
-constexpr std::string_view LuaPushNilPattern =
-    "55 8B EC 8B 55 ? 8B 42 ? C7 40";
-constexpr std::string_view LuaNextPattern =
-    "55 8B EC 56 FF 75 ? 8B 75 ? 56 E8 ? ? ? ? 83 C4 ? 83 78 ? ? 74 ? "
-    "C7 05 ? ? ? ? ? ? ? ? 8B 4E ? 83 E9 ? 51 FF 30 56";
-constexpr std::string_view LuaPushValuePattern =
-    "55 8B EC 56 57 FF 75 ? 8B 7D";
-constexpr std::string_view ClientGameDebugHookAccessPattern =
-    "A1 ? ? ? ? 8D 8D ? ? ? ? 51 8D 8D ? ? ? ? 51 FF B5 ? ? ? ? "
-    "8B 88 ? ? ? ? E8 ? ? ? ?";
-
-constexpr char LuaBootstrap[] = R"DFLUA(
-local O,G=false,0
-local TS,TL=triggerServerEvent,triggerLatentServerEvent
-local R=getThisResource()
-local Global=getfenv(0)
-local PCall,Raise,Kind=pcall,error,type
-local RawSet,SetMeta=rawset,setmetatable
-local Scope=dfTrapScope
-
-local function restore(g)
-    if g~=G then return end
-    hideFunctionCall(false)
-end
-
-local function injectError(kind,value)
-    dfEmit('inject',value,0)
-    outputChatBox('[DarkFlame] '..kind..': '..tostring(value),255,64,64)
-end
-
-local function emitEvent(sourceResource,functionName,allowed,file,line,...)
-    local args={...}
-    local resourceName=sourceResource and getResourceName(sourceResource)
-    if resourceName=='province_afktimer'
-        or tostring(args[1])=='inventory:getPlayersObjectInfo'
-        or tostring(args[1])=='radio:onPlayerSyncBoomBox'
-        or tostring(args[1])=='player:requestStreamData' then
-        return
-    end
-    local ok,formatted=pcall(inspect,args)
-    if not ok then formatted='<inspect error: '..tostring(formatted)..'>' end
-    local row='['..tostring(resourceName)..' | '..tostring(file)..':'
-        ..tostring(line)..'] '..tostring(functionName)..'(args: '
-        ..tostring(#args)..'): '..tostring(formatted)
-    dfEmit('event',row)
-end
-
-local function hiddenCall(name,original,...)
-    if dfHideActive() then
-        local info=debug and debug.getinfo and debug.getinfo(3,'Sl')
-        emitEvent(R,name,true,info and info.short_src or '[injected]',
-            info and info.currentline or 0,...)
-    end
-    return original(...)
-end
-
-local function wrappedServerEvent(...)
-    return hiddenCall('triggerServerEvent',TS,...)
-end
-
-local function wrappedLatentEvent(...)
-    return hiddenCall('triggerLatentServerEvent',TL,...)
-end
-
-local function finishScope(ok,...)
-    Scope(false)
-    if not ok then Raise((...),0) end
-    return ...
-end
-
-local function scopedCall(original,...)
-    Scope(true)
-    return finishScope(PCall(original,...))
-end
-
-local function protect(original)
-    return function(...)
-        return scopedCall(original,...)
-    end
-end
-
-local function injectedEnvironment()
-    local env={}
-    RawSet(env,'_G',env)
-    RawSet(env,'triggerServerEvent',protect(wrappedServerEvent))
-    RawSet(env,'triggerLatentServerEvent',protect(wrappedLatentEvent))
-    SetMeta(env,{
-        __index=function(_,key)
-            local value=Global[key]
-            if Kind(value)~='function' then return value end
-            local wrapped=protect(value)
-            RawSet(env,key,wrapped)
-            return wrapped
-        end,
-        __newindex=function(_,key,value)
-            RawSet(Global,key,value)
-        end,
-    })
-    return env
-end
-
-local function update()
-    local visible=dfMenuOpen()
-    if visible~=O then
-        O=visible
-        toggleAllControls(not visible)
-        guiSetInputMode(visible and 'no_binds' or 'allow_binds')
-        showCursor(visible)
-        if visible then setCursorAlpha(255) end
-    end
-
-    local code,target=dfTake()
-    if not code then return end
-    G=G+1
-    hideFunctionCall(true)
-    local ok,result=dfInject(target,code)
-    if not ok then injectError('Inject error',result)
-    else outputChatBox('[DarkFlame] Lua thread '..tostring(result)..' started.',96,255,128) end
-    setTimer(restore,2000,1,G)
-end
-
-setTimer(update,100,0)
-dfEmit('monitor','outgoing Lua packet monitor active',0)
-)DFLUA";
 
 using LuaCFunction = int(__cdecl*)(void*);
-using LuaPCallFn = int(__cdecl*)(void*, int, int, int);
-using LuaPushCClosureFn = void(__cdecl*)(void*, LuaCFunction, int);
-using LuaSetFieldFn = void(__cdecl*)(void*, int, const char*);
-using LuaPushBooleanFn = void(__cdecl*)(void*, int);
-using LuaToBooleanFn = int(__cdecl*)(void*, int);
-using LuaToLStringFn = const char*(__cdecl*)(void*, int, std::size_t*);
-using LuaPushStringFn = void(__cdecl*)(void*, const char*);
-using LuaGetTopFn = int(__cdecl*)(void*);
-using LuaGetFieldFn = void(__cdecl*)(void*, int, const char*);
-using LuaSetTopFn = void(__cdecl*)(void*, int);
 using LuaNewThreadFn = void*(__cdecl*)(void*);
-using LuaLRefFn = int(__cdecl*)(void*, int);
-using LuaLUnrefFn = void(__cdecl*)(void*, int, int);
-using LuaTypeFn = int(__cdecl*)(void*, int);
-using LuaPushNilFn = void(__cdecl*)(void*);
-using LuaNextFn = int(__cdecl*)(void*, int);
-using LuaPushValueFn = void(__cdecl*)(void*, int);
 using GetVirtualMachineFn = void*(__thiscall*)(void*, void*);
 using IsNameAllowedFn = bool(__thiscall*)(void*, const char*, const void*, bool);
 using CallHookFn = bool(__stdcall*)(const char*, const void*, const void*, bool);
@@ -249,50 +63,34 @@ std::atomic_uint32_t g_bootstrapState{};
 std::atomic<void*> g_bootstrapLua{};
 std::atomic<void*> g_bootstrapMain{};
 std::atomic<DWORD> g_reconnectCheckTick{};
+std::atomic<DWORD> g_runtimePulseTick{};
 std::atomic_uint32_t g_tramState{};
 std::atomic_uintptr_t g_tramSession{};
 std::atomic<DWORD> g_tramRetryTick{};
 std::atomic_bool g_tramUiReadyLogged{};
 HMODULE g_clientModule{};
-std::array<std::array<unsigned char, 8>, 4> g_hookPatches{};
-std::array<bool, 4> g_hookPatchValid{};
+std::array<std::array<unsigned char, 8>, 3> g_hookPatches{};
+std::array<bool, 3> g_hookPatchValid{};
 std::mutex g_installMutex;
 std::wstring g_tramScriptPath;
 std::string g_bootstrapPayload;
+std::string g_bootstrapError;
 std::string g_tramPayload;
 void* g_isNameAllowedTarget{};
 void* g_callHookTarget{};
-void* g_luaPCallTarget{};
 void* g_triggerServerEventTarget{};
 IsNameAllowedFn g_isNameAllowed{};
 CallHookFn g_callHook{};
-LuaPCallFn g_luaPCall{};
 LuaCFunction g_triggerServerEvent{};
 LuaCFunction g_triggerEvent{};
 LuaCFunction g_addEvent{};
 LuaCFunction g_addEventHandler{};
 LuaCFunction g_removeEventHandler{};
-LuaCFunction g_loadString{};
 GetVirtualMachineFn g_getVirtualMachine{};
 void** g_luaManagerSlot{};
 void** g_clientGameSlot{};
 std::size_t g_debugHookManagerOffset{};
-LuaPushCClosureFn g_luaPushCClosure{};
-LuaSetFieldFn g_luaSetField{};
-LuaPushBooleanFn g_luaPushBoolean{};
-LuaToBooleanFn g_luaToBoolean{};
-LuaToLStringFn g_luaToLString{};
-LuaPushStringFn g_luaPushString{};
-LuaGetTopFn g_luaGetTop{};
-LuaGetFieldFn g_luaGetField{};
-LuaSetTopFn g_luaSetTop{};
 LuaNewThreadFn g_luaNewThread{};
-LuaLRefFn g_luaLRef{};
-LuaLUnrefFn g_luaLUnref{};
-LuaTypeFn g_luaType{};
-LuaPushNilFn g_luaPushNil{};
-LuaNextFn g_luaNext{};
-LuaPushValueFn g_luaPushValue{};
 AddDebugHookFn g_addDebugHook{};
 RemoveDebugHookFn g_removeDebugHook{};
 LuaMToRefFn g_luaMToRef{};
@@ -316,7 +114,7 @@ struct EventCatcher
     void* owner;
     void* main;
     std::string name;
-    std::string key;
+    int reference;
     int skip;
 };
 
@@ -342,16 +140,11 @@ bool ControlName(std::string_view name)
     return name == "addDebugHook" || name == "removeDebugHook";
 }
 
-std::wstring WideAscii(std::string_view text)
-{
-    return {text.begin(), text.end()};
-}
-
 std::string LuaText(void* lua, int index, std::size_t limit = 384,
     bool flatten = true)
 {
     std::size_t length{};
-    const char* text = g_luaToLString(lua, index, &length);
+    const char* text = DarkFlameLuaToLString(lua, index, &length);
     if(!text)
         return "<value>";
     const std::size_t copied = std::min(length, limit);
@@ -370,6 +163,7 @@ bool InjectIntoResource(std::string_view resource, std::string_view code,
     std::uintptr_t& id, std::string& error);
 void DrainThreadRequests();
 bool LuaIdentity(void* lua, void*& owner, void*& state);
+bool LuaStateAlive(void* state, void* owner = nullptr);
 std::string CurrentLuaResource(void* lua);
 int __cdecl DirectTriggerServerEvent(void* lua);
 int __cdecl DirectTriggerEvent(void* lua);
@@ -386,32 +180,31 @@ int __cdecl DirectTramTakeCommand(void* lua);
 int __cdecl DirectTramUpdate(void* lua);
 void DispatchEventCatchers(void* lua);
 
-void Register(void* lua, const char* name, LuaCFunction function)
+void RegisterPrivate(void* lua, const char* name, LuaCFunction function)
 {
-    g_luaPushCClosure(lua, function, 0);
-    g_luaSetField(lua, LuaGlobalsIndex, name);
+    DarkFlameLuaRegister(lua, name, function);
 }
 
 int __cdecl HideFunctionCall(void* lua)
 {
-    const bool hidden = g_luaToBoolean(lua, 1) != 0;
+    const bool hidden = DarkFlameLuaToBoolean(lua, 1) != 0;
     g_hideCalls.store(hidden, std::memory_order_release);
     if(g_hideTransitions.fetch_add(1, std::memory_order_relaxed) < 12)
         Log::Write(hidden ? L"[lua-bridge] hide filter enabled"
             : L"[lua-bridge] hide filter disabled");
-    g_luaPushBoolean(lua, 1);
+    DarkFlameLuaPushBoolean(lua, 1);
     return 1;
 }
 
 int __cdecl HideActive(void* lua)
 {
-    g_luaPushBoolean(lua, HiddenActive() ? 1 : 0);
+    DarkFlameLuaPushBoolean(lua, HiddenActive() ? 1 : 0);
     return 1;
 }
 
 int __cdecl TrapScope(void* lua)
 {
-    const bool enter = g_luaToBoolean(lua, 1) != 0;
+    const bool enter = DarkFlameLuaToBoolean(lua, 1) != 0;
     std::uint32_t depth{};
     if(enter)
     {
@@ -433,7 +226,7 @@ int __cdecl TrapScope(void* lua)
             + (enter ? L"enter, depth=" : L"leave, depth=")
             + std::to_wstring(depth));
     }
-    g_luaPushBoolean(lua, 1);
+    DarkFlameLuaPushBoolean(lua, 1);
     return 1;
 }
 
@@ -444,8 +237,8 @@ int __cdecl TakeLuaCode(void* lua)
     std::string resource;
     if(!GuiTakeLuaCode(code, resource))
         return 0;
-    g_luaPushString(lua, code.c_str());
-    g_luaPushString(lua, resource.c_str());
+    DarkFlameLuaPushString(lua, code.c_str());
+    DarkFlameLuaPushString(lua, resource.c_str());
     return 2;
 }
 
@@ -456,28 +249,28 @@ int __cdecl InjectResource(void* lua)
     std::uintptr_t id{};
     std::string error;
     const bool injected = InjectIntoResource(resource, code, id, error);
-    g_luaPushBoolean(lua, injected ? 1 : 0);
+    DarkFlameLuaPushBoolean(lua, injected ? 1 : 0);
     if(injected)
     {
         char text[24]{};
         std::snprintf(text, sizeof(text), "0x%08lX",
             static_cast<unsigned long>(id));
-        g_luaPushString(lua, text);
+        DarkFlameLuaPushString(lua, text);
     }
     else
-        g_luaPushString(lua, error.c_str());
+        DarkFlameLuaPushString(lua, error.c_str());
     return 2;
 }
 
 int __cdecl MenuOpen(void* lua)
 {
-    g_luaPushBoolean(lua, GuiVisible() ? 1 : 0);
+    DarkFlameLuaPushBoolean(lua, GuiVisible() ? 1 : 0);
     return 1;
 }
 
 int __cdecl EmitEvent(void* lua)
 {
-    const int top = std::clamp(g_luaGetTop(lua), 0, 16);
+    const int top = std::clamp(DarkFlameLuaGetTop(lua), 0, 16);
     if(!top)
         return 0;
 
@@ -495,16 +288,16 @@ int __cdecl DirectTramTakeCommand(void* lua)
     std::string command;
     if(!GuiTakeTramCommand(command))
         return 0;
-    g_luaPushString(lua, command.c_str());
+    DarkFlameLuaPushString(lua, command.c_str());
     Log::Write(L"[trambot] Lua consumed GUI command: " + WideAscii(command));
     return 1;
 }
 
 int __cdecl DirectTramUpdate(void* lua)
 {
-    if(g_luaGetTop(lua) < 2)
+    if(DarkFlameLuaGetTop(lua) < 2)
     {
-        g_luaPushBoolean(lua, 0);
+        DarkFlameLuaPushBoolean(lua, 0);
         return 1;
     }
     const std::string key = LuaText(lua, 1, 64, false);
@@ -518,37 +311,37 @@ int __cdecl DirectTramUpdate(void* lua)
         else if(!loaded)
             g_tramUiReadyLogged.store(false, std::memory_order_release);
     }
-    g_luaPushBoolean(lua, 1);
+    DarkFlameLuaPushBoolean(lua, 1);
     return 1;
 }
 
 void RegisterDirectAliases(void* lua)
 {
-    Register(lua, "dfTriggerServerEvent", &DirectTriggerServerEvent);
-    Register(lua, "dfTriggerEvent", &DirectTriggerEvent);
-    Register(lua, "dfAddEvent", &DirectAddEvent);
-    Register(lua, "dfAddEventHandler", &DirectAddEventHandler);
-    Register(lua, "dfRemoveEventHandler", &DirectRemoveEventHandler);
-    Register(lua, "dfAddDebugHook", &DirectAddDebugHook);
-    Register(lua, "dfRemoveDebugHook", &DirectRemoveDebugHook);
-    Register(lua, "dfEmulateKey", &DirectEmulateKey);
-    Register(lua, "dfPlayAlertSignal", &DirectPlayAlertSignal);
-    Register(lua, "dfCatchServerEvent", &DirectCatchServerEvent);
-    Register(lua, "dfRemoveEventCatcher", &DirectRemoveEventCatcher);
-    Register(lua, "dfTramTakeCommand", &DirectTramTakeCommand);
-    Register(lua, "dfTramUpdate", &DirectTramUpdate);
-    Register(lua, "dfMenuOpen", &MenuOpen);
+    RegisterPrivate(lua, "dfTriggerServerEvent", &DirectTriggerServerEvent);
+    RegisterPrivate(lua, "dfTriggerEvent", &DirectTriggerEvent);
+    RegisterPrivate(lua, "dfAddEvent", &DirectAddEvent);
+    RegisterPrivate(lua, "dfAddEventHandler", &DirectAddEventHandler);
+    RegisterPrivate(lua, "dfRemoveEventHandler", &DirectRemoveEventHandler);
+    RegisterPrivate(lua, "dfAddDebugHook", &DirectAddDebugHook);
+    RegisterPrivate(lua, "dfRemoveDebugHook", &DirectRemoveDebugHook);
+    RegisterPrivate(lua, "dfEmulateKey", &DirectEmulateKey);
+    RegisterPrivate(lua, "dfPlayAlertSignal", &DirectPlayAlertSignal);
+    RegisterPrivate(lua, "dfCatchServerEvent", &DirectCatchServerEvent);
+    RegisterPrivate(lua, "dfRemoveEventCatcher", &DirectRemoveEventCatcher);
+    RegisterPrivate(lua, "dfTramTakeCommand", &DirectTramTakeCommand);
+    RegisterPrivate(lua, "dfTramUpdate", &DirectTramUpdate);
+    RegisterPrivate(lua, "dfMenuOpen", &MenuOpen);
 }
 
 void RegisterBridge(void* lua)
 {
     RegisterDirectAliases(lua);
-    Register(lua, "hideFunctionCall", &HideFunctionCall);
-    Register(lua, "dfTrapScope", &TrapScope);
-    Register(lua, "dfHideActive", &HideActive);
-    Register(lua, "dfTake", &TakeLuaCode);
-    Register(lua, "dfInject", &InjectResource);
-    Register(lua, "dfEmit", &EmitEvent);
+    RegisterPrivate(lua, "hideFunctionCall", &HideFunctionCall);
+    RegisterPrivate(lua, "dfTrapScope", &TrapScope);
+    RegisterPrivate(lua, "dfHideActive", &HideActive);
+    RegisterPrivate(lua, "dfTake", &TakeLuaCode);
+    RegisterPrivate(lua, "dfInject", &InjectResource);
+    RegisterPrivate(lua, "dfEmit", &EmitEvent);
 }
 
 void LogMonitorDecision(const char* name, bool allowed,
@@ -587,35 +380,6 @@ struct LuaArgumentsView
     std::uintptr_t capacity;
 };
 
-bool Readable(const void* pointer, std::size_t size)
-{
-    if(!pointer || !size)
-        return pointer && !size;
-    std::uintptr_t cursor = reinterpret_cast<std::uintptr_t>(pointer);
-    if(cursor > std::numeric_limits<std::uintptr_t>::max() - size)
-        return false;
-    const std::uintptr_t finish = cursor + size;
-    while(cursor < finish)
-    {
-        MEMORY_BASIC_INFORMATION info{};
-        if(!VirtualQuery(reinterpret_cast<const void*>(cursor), &info,
-            sizeof(info)))
-        {
-            return false;
-        }
-        if(info.State != MEM_COMMIT || (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
-            return false;
-        const std::uintptr_t base = reinterpret_cast<std::uintptr_t>(info.BaseAddress);
-        if(base > std::numeric_limits<std::uintptr_t>::max() - info.RegionSize)
-            return false;
-        const std::uintptr_t regionEnd = base + info.RegionSize;
-        if(regionEnd <= cursor)
-            return false;
-        cursor = std::min(regionEnd, finish);
-    }
-    return true;
-}
-
 struct LuaFunctionRefStorage
 {
     alignas(void*) std::byte bytes[24];
@@ -624,12 +388,9 @@ struct LuaFunctionRefStorage
 static_assert(sizeof(LuaFunctionRefStorage) == 24);
 static_assert(sizeof(std::string) == 24);
 
-template<class T>
-bool ReadValue(const void* base, std::size_t offset, T& value);
-
 bool DebugHookType(void* lua, int& hookType)
 {
-    if(!g_luaType || g_luaType(lua, 1) != 4)
+    if(DarkFlameLuaType(lua, 1) != 4)
         return false;
     const std::string name = LuaText(lua, 1, 32);
     constexpr std::string_view names[] = {
@@ -645,29 +406,29 @@ bool DebugHookType(void* lua, int& hookType)
 
 bool AllowedDebugHookNames(void* lua, std::vector<std::string>& names)
 {
-    const int top = g_luaGetTop(lua);
-    if(top < 3 || g_luaType(lua, 3) == 0)
+    const int top = DarkFlameLuaGetTop(lua);
+    if(top < 3 || DarkFlameLuaType(lua, 3) == 0)
         return true;
-    if(g_luaType(lua, 3) != 5)
+    if(DarkFlameLuaType(lua, 3) != 5)
         return false;
 
-    g_luaPushNil(lua);
-    while(g_luaNext(lua, 3))
+    DarkFlameLuaPushNil(lua);
+    while(DarkFlameLuaNext(lua, 3))
     {
-        if(names.size() >= 1024 || g_luaType(lua, -1) != 4)
+        if(names.size() >= 1024 || DarkFlameLuaType(lua, -1) != 4)
         {
-            g_luaSetTop(lua, top);
+            DarkFlameLuaSetTop(lua, top);
             return false;
         }
         std::size_t length{};
-        const char* value = g_luaToLString(lua, -1, &length);
+        const char* value = DarkFlameLuaToLString(lua, -1, &length);
         if(!value || length > 1024)
         {
-            g_luaSetTop(lua, top);
+            DarkFlameLuaSetTop(lua, top);
             return false;
         }
         names.emplace_back(value, length);
-        g_luaSetTop(lua, -2);
+        DarkFlameLuaSetTop(lua, -2);
     }
     return true;
 }
@@ -687,7 +448,7 @@ void* DebugHookManager()
 
 int PushDirectResult(void* lua, bool result)
 {
-    g_luaPushBoolean(lua, result ? 1 : 0);
+    DarkFlameLuaPushBoolean(lua, result ? 1 : 0);
     return 1;
 }
 
@@ -735,8 +496,8 @@ bool CatcherId(void* lua, int index, std::uint32_t& id)
 
 int __cdecl DirectCatchServerEvent(void* lua)
 {
-    if(g_luaGetTop(lua) < 3 || g_luaType(lua, 1) != 4
-        || g_luaType(lua, 3) != 6)
+    if(DarkFlameLuaGetTop(lua) < 3 || DarkFlameLuaType(lua, 1) != 4
+        || DarkFlameLuaType(lua, 3) != 6)
     {
         return PushDirectResult(lua, false);
     }
@@ -758,15 +519,14 @@ int __cdecl DirectCatchServerEvent(void* lua)
     std::uint32_t id = g_nextCatcher.fetch_add(1, std::memory_order_relaxed);
     if(!id)
         id = g_nextCatcher.fetch_add(1, std::memory_order_relaxed);
-    const std::string key = "__darkFlameEventCatcher_" + std::to_string(id);
-    g_luaPushValue(lua, 3);
-    g_luaSetField(lua, LuaGlobalsIndex, key.c_str());
+    DarkFlameLuaPushValue(lua, 3);
+    const int reference = DarkFlameLuaRef(lua, LuaRegistryIndex);
     {
         std::scoped_lock lock(g_catcherMutex);
-        g_eventCatchers.push_back({id, owner, main, name, key, skip});
+        g_eventCatchers.push_back({id, owner, main, name, reference, skip});
     }
     const std::string handle = std::to_string(id);
-    g_luaPushString(lua, handle.c_str());
+    DarkFlameLuaPushString(lua, handle.c_str());
     return 1;
 }
 
@@ -778,7 +538,7 @@ int __cdecl DirectRemoveEventCatcher(void* lua)
     if(!CatcherId(lua, 1, id) || !LuaIdentity(lua, owner, main))
         return PushDirectResult(lua, false);
 
-    std::string key;
+    int reference{-1};
     {
         std::scoped_lock lock(g_catcherMutex);
         const auto catcher = std::find_if(g_eventCatchers.begin(),
@@ -788,11 +548,10 @@ int __cdecl DirectRemoveEventCatcher(void* lua)
         });
         if(catcher == g_eventCatchers.end())
             return PushDirectResult(lua, false);
-        key = catcher->key;
+        reference = catcher->reference;
         g_eventCatchers.erase(catcher);
     }
-    g_luaPushNil(lua);
-    g_luaSetField(lua, LuaGlobalsIndex, key.c_str());
+    DarkFlameLuaUnref(lua, LuaRegistryIndex, reference);
     return PushDirectResult(lua, true);
 }
 
@@ -803,10 +562,29 @@ bool CatcherActive(std::uint32_t id)
         [id](const EventCatcher& item) { return item.id == id; });
 }
 
+void ClearEventCatchers(bool release)
+{
+    std::vector<EventCatcher> catchers;
+    {
+        std::scoped_lock lock(g_catcherMutex);
+        catchers.swap(g_eventCatchers);
+    }
+    if(!release)
+        return;
+    for(const EventCatcher& catcher : catchers)
+    {
+        if(LuaStateAlive(catcher.main, catcher.owner))
+        {
+            DarkFlameLuaUnref(catcher.main, LuaRegistryIndex,
+                catcher.reference);
+        }
+    }
+}
+
 void DispatchEventCatchers(void* lua)
 {
-    if(g_dispatchingCatchers || !lua || g_luaGetTop(lua) < 1
-        || g_luaType(lua, 1) != 4)
+    if(g_dispatchingCatchers || !lua || DarkFlameLuaGetTop(lua) < 1
+        || DarkFlameLuaType(lua, 1) != 4)
     {
         return;
     }
@@ -828,28 +606,28 @@ void DispatchEventCatchers(void* lua)
     if(matches.empty())
         return;
 
-    const int top = g_luaGetTop(lua);
+    const int top = DarkFlameLuaGetTop(lua);
     g_dispatchingCatchers = true;
     for(const EventCatcher& catcher : matches)
     {
         if(!CatcherActive(catcher.id))
             continue;
-        g_luaGetField(lua, LuaGlobalsIndex, catcher.key.c_str());
-        if(g_luaType(lua, -1) != 6)
+        DarkFlameLuaPushRef(lua, LuaRegistryIndex, catcher.reference);
+        if(DarkFlameLuaType(lua, -1) != 6)
         {
-            g_luaSetTop(lua, top);
+            DarkFlameLuaSetTop(lua, top);
             continue;
         }
         const int first = std::min(top + 1, 2 + catcher.skip);
         for(int index = first; index <= top; ++index)
-            g_luaPushValue(lua, index);
-        const int result = g_luaPCall(lua, top - first + 1, 0, 0);
+            DarkFlameLuaPushValue(lua, index);
+        const int result = DarkFlameLuaPCall(lua, top - first + 1, 0, 0);
         if(result)
         {
             Log::Write(L"[lua-bridge] event catcher callback failed: "
                 + WideAscii(LuaText(lua, -1, 1024, false)));
         }
-        g_luaSetTop(lua, top);
+        DarkFlameLuaSetTop(lua, top);
     }
     g_dispatchingCatchers = false;
 }
@@ -884,25 +662,6 @@ HWND ProcessWindow()
     return search.window;
 }
 
-int VirtualKey(std::string key)
-{
-    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char value)
-    {
-        return static_cast<char>(std::toupper(value));
-    });
-    if(key.size() == 1)
-    {
-        const SHORT code = VkKeyScanA(key.front());
-        return code == -1 ? 0 : LOBYTE(code);
-    }
-    if(key == "SPACE") return VK_SPACE;
-    if(key == "ENTER") return VK_RETURN;
-    if(key == "LSHIFT") return VK_LSHIFT;
-    if(key == "LCTRL") return VK_LCONTROL;
-    if(key == "LALT") return VK_LMENU;
-    return 0;
-}
-
 int __cdecl DirectEmulateKey(void* lua)
 {
     const std::string key = LuaText(lua, 1, 32);
@@ -913,7 +672,7 @@ int __cdecl DirectEmulateKey(void* lua)
     if(!virtualKey || !window)
         return PushDirectResult(lua, false);
 
-    const bool pressed = g_luaToBoolean(lua, 2) != 0;
+    const bool pressed = DarkFlameLuaToBoolean(lua, 2) != 0;
     const UINT scan = MapVirtualKeyA(virtualKey, MAPVK_VK_TO_VSC);
     LPARAM parameter = 1 | static_cast<LPARAM>(scan << 16);
     const bool extended = virtualKey == VK_RMENU || virtualKey == VK_RCONTROL
@@ -942,9 +701,9 @@ int __cdecl DirectPlayAlertSignal(void* lua)
 int DirectDebugHook(void* lua, bool add)
 {
     int hookType{};
-    if(!g_luaMToRef || !g_luaFunctionRefDtor || !g_luaType
-        || g_luaGetTop(lua) < 2 || !DebugHookType(lua, hookType)
-        || g_luaType(lua, 2) != 6)
+    if(!g_luaMToRef || !g_luaFunctionRefDtor
+        || DarkFlameLuaGetTop(lua) < 2 || !DebugHookType(lua, hookType)
+        || DarkFlameLuaType(lua, 2) != 6)
     {
         return PushDirectResult(lua, false);
     }
@@ -975,41 +734,6 @@ int __cdecl DirectAddDebugHook(void* lua)
 int __cdecl DirectRemoveDebugHook(void* lua)
 {
     return DirectDebugHook(lua, false);
-}
-
-template<class T>
-bool ReadValue(const void* base, std::size_t offset, T& value)
-{
-    const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(base);
-    if(address > std::numeric_limits<std::uintptr_t>::max() - offset)
-        return false;
-    const void* source = reinterpret_cast<const void*>(address + offset);
-    if(!Readable(source, sizeof(T)))
-        return false;
-    std::memcpy(&value, source, sizeof(T));
-    return true;
-}
-
-bool ReadSString(const void* object, std::string& output,
-    std::size_t limit = 768)
-{
-    std::uint32_t length{};
-    std::uint32_t capacity{};
-    if(!ReadValue(object, 16, length) || !ReadValue(object, 20, capacity)
-        || length > capacity || length > 1024 * 1024)
-    {
-        return false;
-    }
-    const char* text{};
-    if(capacity <= 15)
-        text = static_cast<const char*>(object);
-    else if(!ReadValue(object, 0, text))
-        return false;
-    const std::size_t copied = std::min<std::size_t>(length, limit);
-    if(copied && !Readable(text, copied))
-        return false;
-    output.assign(text ? text : "", copied);
-    return true;
 }
 
 struct LuaMainEntry
@@ -1088,7 +812,7 @@ bool LuaMains(std::vector<LuaMainEntry>& entries)
     return node == head;
 }
 
-bool LuaStateAlive(void* state, void* owner = nullptr)
+bool LuaStateAlive(void* state, void* owner)
 {
     std::vector<LuaMainEntry> entries;
     if(!LuaMains(entries))
@@ -1118,6 +842,15 @@ bool FindResourceState(std::string_view resource, LuaMainEntry& found)
     return true;
 }
 
+bool FindBootstrapState(LuaMainEntry& found)
+{
+    std::vector<LuaMainEntry> entries;
+    if(!LuaMains(entries) || entries.empty())
+        return false;
+    found = std::move(entries.front());
+    return true;
+}
+
 std::string CurrentLuaResource(void* lua)
 {
     if(!lua || !g_luaManagerSlot || !g_getVirtualMachine)
@@ -1128,42 +861,6 @@ std::string CurrentLuaResource(void* lua)
     void* luaMain = g_getVirtualMachine(manager, lua);
     LuaMainEntry entry{};
     return ReadLuaMain(luaMain, entry) ? entry.resource : "unknown";
-}
-
-std::string LuaLiteral(std::string_view value)
-{
-    std::string output{"\""};
-    output.reserve(value.size() + 16);
-    for(const unsigned char character : value)
-    {
-        switch(character)
-        {
-        case '\\': output += "\\\\"; break;
-        case '"': output += "\\\""; break;
-        case '\n': output += "\\n"; break;
-        case '\r': output += "\\r"; break;
-        case '\t': output += "\\t"; break;
-        default:
-            if(character >= 0x20 && character < 0x7F)
-                output.push_back(static_cast<char>(character));
-            else
-            {
-                char escaped[5]{};
-                std::snprintf(escaped, sizeof(escaped), "\\%03u", character);
-                output += escaped;
-            }
-            break;
-        }
-    }
-    output.push_back('"');
-    return output;
-}
-
-std::string ThreadKey(std::uintptr_t id)
-{
-    char key[24]{};
-    std::snprintf(key, sizeof(key), "0x%08lX", static_cast<unsigned long>(id));
-    return key;
 }
 
 std::string ManagedChunk(std::uintptr_t id, std::string_view userCode)
@@ -1211,31 +908,25 @@ std::string CleanupChunk(std::uintptr_t id)
 
 bool RunLuaChunk(void* lua, std::string_view code, std::string& error)
 {
-    const int top = g_luaGetTop(lua);
-    if(top || !g_loadString)
+    const int top = DarkFlameLuaGetTop(lua);
+    if(top)
     {
-        error = top ? "native compiler requires an empty Lua stack"
-            : "native compiler wrapper unavailable";
+        error = "embedded parser requires an empty Lua stack";
         return false;
     }
-    const std::string source(code);
-    g_luaPushString(lua, source.c_str());
-    const int values = g_loadString(lua);
-    int result = values == 1 ? g_luaPCall(lua, 0, 0, 0) : 1;
+    int result = DarkFlameLoadLuaSource(lua, code.data(), code.size(),
+        "@DarkFlame");
+    if(!result)
+        result = DarkFlameLuaPCall(lua, 0, 0, 0);
     if(result)
-        error = LuaText(lua, -1, 2048, false);
-    g_luaSetTop(lua, top);
+    {
+        std::size_t length{};
+        const char* text = DarkFlameLuaToLString(lua, -1, &length);
+        error = text ? std::string(text, std::min(length, std::size_t{2048}))
+            : "<value>";
+    }
+    DarkFlameLuaSetTop(lua, top);
     return result == 0;
-}
-
-std::string Timestamp()
-{
-    SYSTEMTIME time{};
-    GetLocalTime(&time);
-    char output[24]{};
-    std::snprintf(output, sizeof(output), "%02u:%02u:%02u.%03u",
-        time.wHour, time.wMinute, time.wSecond, time.wMilliseconds);
-    return output;
 }
 
 void RemoveSession(std::vector<LuaSession>::iterator session, bool release)
@@ -1246,7 +937,7 @@ void RemoveSession(std::vector<LuaSession>::iterator session, bool release)
         std::string ignored;
         g_scopeDepth.fetch_add(1, std::memory_order_acq_rel);
         RunLuaChunk(session->thread, CleanupChunk(id), ignored);
-        g_luaLUnref(session->main, LuaRegistryIndex, session->reference);
+        DarkFlameLuaUnref(session->main, LuaRegistryIndex, session->reference);
         g_scopeDepth.fetch_sub(1, std::memory_order_acq_rel);
     }
     g_sessions.erase(session);
@@ -1290,18 +981,23 @@ bool InjectIntoResource(std::string_view resource, std::string_view code,
         return false;
     }
 
-    RegisterDirectAliases(target.state);
-
-    const int mainTop = g_luaGetTop(target.state);
+    const int mainTop = DarkFlameLuaGetTop(target.state);
     void* thread = g_luaNewThread(target.state);
     if(!thread)
     {
-        g_luaSetTop(target.state, mainTop);
+        DarkFlameLuaSetTop(target.state, mainTop);
         error = "lua_newthread failed";
         return false;
     }
-    const int reference = g_luaLRef(target.state, LuaRegistryIndex);
-    g_luaSetTop(target.state, mainTop);
+    const int reference = DarkFlameLuaRef(target.state, LuaRegistryIndex);
+    DarkFlameLuaSetTop(target.state, mainTop);
+    if(!DarkFlameLuaInstallPrivateGlobals(thread))
+    {
+        DarkFlameLuaUnref(target.state, LuaRegistryIndex, reference);
+        error = "private globals initialization failed";
+        return false;
+    }
+    RegisterDirectAliases(thread);
     id = reinterpret_cast<std::uintptr_t>(thread);
 
     g_scopeDepth.fetch_add(1, std::memory_order_acq_rel);
@@ -1311,7 +1007,7 @@ bool InjectIntoResource(std::string_view resource, std::string_view code,
     {
         std::string ignored;
         RunLuaChunk(thread, CleanupChunk(id), ignored);
-        g_luaLUnref(target.state, LuaRegistryIndex, reference);
+        DarkFlameLuaUnref(target.state, LuaRegistryIndex, reference);
         return false;
     }
 
@@ -1392,11 +1088,11 @@ void BuildBootstrapPayload(std::wstring_view loaderDirectory)
 {
     g_tramScriptPath = loaderDirectory.empty() ? std::wstring{}
         : std::wstring(loaderDirectory) + L"\\TramBot.lua";
-    g_bootstrapPayload.assign(LuaBootstrap);
+    g_bootstrapPayload.assign(LuaBridgePayload::Bootstrap);
     g_tramPayload.clear();
     std::string tram;
     std::string error;
-    if(ReadTramScript(tram, error))
+    if (ReadTramScript(tram, error))
     {
         g_tramPayload = std::move(tram);
         Log::Write(L"[trambot] direct bootstrap core ready: "
@@ -1411,21 +1107,9 @@ void BuildBootstrapPayload(std::wstring_view loaderDirectory)
         + WideAscii(error));
 }
 
-bool SetHideFunctionCall(void* lua, bool enabled, std::string& error)
+void RunDirectBootstrap()
 {
-    const int top = g_luaGetTop(lua);
-    g_luaGetField(lua, LuaGlobalsIndex, "hideFunctionCall");
-    g_luaPushBoolean(lua, enabled ? 1 : 0);
-    const int result = g_luaPCall(lua, 1, 0, 0);
-    if(result)
-        error = LuaText(lua, -1, 2048, false);
-    g_luaSetTop(lua, top);
-    return result == 0;
-}
-
-void RunDirectBootstrap(void* lua)
-{
-    if(g_bootstrapPayload.empty())
+    if (g_bootstrapPayload.empty())
         return;
     std::uint32_t expected{};
     if(!g_bootstrapState.compare_exchange_strong(expected, 3,
@@ -1434,47 +1118,60 @@ void RunDirectBootstrap(void* lua)
         return;
     }
 
-    RegisterBridge(lua);
-    void* owner{};
-    void* main = lua;
-    LuaIdentity(lua, owner, main);
-    const int top = g_luaGetTop(lua);
+    LuaMainEntry target{};
+    if(!FindBootstrapState(target))
+    {
+        g_bootstrapState.store(0, std::memory_order_release);
+        return;
+    }
+    void* owner = target.object;
+    void* main = target.state;
+    void* lua = target.state;
+    const int top = DarkFlameLuaGetTop(lua);
     void* thread = g_luaNewThread(lua);
     const int reference = thread
-        ? g_luaLRef(lua, LuaRegistryIndex) : -1;
-    g_luaSetTop(lua, top);
+        ? DarkFlameLuaRef(lua, LuaRegistryIndex) : -1;
+    DarkFlameLuaSetTop(lua, top);
     std::string error;
     if(!thread)
         error = "lua_newthread failed";
-    const bool hidden = thread && SetHideFunctionCall(lua, true, error);
-    const bool executed = hidden && thread
+    const bool privateGlobals = thread
+        && DarkFlameLuaInstallPrivateGlobals(thread);
+    if(privateGlobals)
+        RegisterBridge(thread);
+    else if(thread)
+        error = "private globals initialization failed";
+    const bool executed = privateGlobals
         && RunLuaChunk(thread, g_bootstrapPayload, error);
-    std::string restoreError;
-    if(hidden)
-        SetHideFunctionCall(lua, false, restoreError);
     g_hideCalls.store(false, std::memory_order_release);
     if(reference >= 0)
-        g_luaLUnref(lua, LuaRegistryIndex, reference);
+        DarkFlameLuaUnref(lua, LuaRegistryIndex, reference);
 
     if(executed && owner)
     {
+        g_bootstrapError.clear();
         g_bootstrapMain.store(owner, std::memory_order_release);
         g_bootstrapLua.store(main, std::memory_order_release);
         g_bootstrapState.store(2, std::memory_order_release);
-        Log::Write(L"[lua-bridge] hidden native compiler bootstrap started");
+        Log::Write(L"[lua-bridge] private embedded runtime carrier="
+            + WideAscii(target.resource));
         return;
     }
 
     if(error.empty())
-        error = owner ? "native compiler bootstrap failed"
+        error = owner ? "embedded parser bootstrap failed"
             : "Lua VM identity unavailable";
     g_bootstrapLua.store(nullptr, std::memory_order_release);
     g_bootstrapMain.store(nullptr, std::memory_order_release);
     g_bootstrapState.store(0, std::memory_order_release);
     GuiUpdateTramState("loaded", "0");
     GuiUpdateTramState("status", error);
-    Log::Write(L"[lua-bridge] hidden native compiler bootstrap failed: "
-        + WideAscii(error));
+    if(error != g_bootstrapError)
+    {
+        g_bootstrapError = error;
+        Log::Write(L"[lua-bridge] embedded parser bootstrap failed: "
+            + WideAscii(error));
+    }
 }
 
 void TryStartTramBot()
@@ -1556,10 +1253,7 @@ void ResetForReconnect(bool immediate = false)
     g_tramRetryTick.store(0, std::memory_order_release);
     g_tramUiReadyLogged.store(false, std::memory_order_release);
     g_sessions.clear();
-    {
-        std::scoped_lock lock(g_catcherMutex);
-        g_eventCatchers.clear();
-    }
+    ClearEventCatchers(false);
     GuiClearLuaThreads();
     GuiResetTramState();
     g_hideCalls.store(false, std::memory_order_release);
@@ -1681,44 +1375,6 @@ bool ArgumentString(const void* argument, std::string& output,
     if(copied != length)
         output += "...";
     return true;
-}
-
-std::string Escape(std::string_view value)
-{
-    std::string output;
-    output.reserve(value.size() + 2);
-    output.push_back('"');
-    for(const unsigned char character : value)
-    {
-        switch(character)
-        {
-        case '\\': output += "\\\\"; break;
-        case '"': output += "\\\""; break;
-        case '\r': output += "\\r"; break;
-        case '\n': output += "\\n"; break;
-        case '\t': output += "\\t"; break;
-        default:
-            if(character >= 0x20)
-                output.push_back(static_cast<char>(character));
-            else
-            {
-                char escaped[5]{};
-                std::snprintf(escaped, sizeof(escaped), "\\x%02X", character);
-                output += escaped;
-            }
-            break;
-        }
-    }
-    output.push_back('"');
-    return output;
-}
-
-std::string Hex(std::uintptr_t value)
-{
-    char output[24]{};
-    std::snprintf(output, sizeof(output), "0x%08lX",
-        static_cast<unsigned long>(value));
-    return output;
 }
 
 std::string FormatArgument(const void* argument, unsigned depth = 0)
@@ -1884,21 +1540,6 @@ bool __fastcall HookIsNameAllowed(void* self, void*, const char* name,
     return allowed;
 }
 
-int __cdecl HookLuaPCall(void* lua, int argumentCount, int resultCount,
-    int errorFunction)
-{
-    const bool ready = g_ready.load(std::memory_order_acquire);
-    if(ready)
-    {
-        ResetForReconnect();
-        RunDirectBootstrap(lua);
-    }
-    const int result = g_luaPCall(lua, argumentCount, resultCount, errorFunction);
-    if(ready && !result)
-        TryStartTramBot();
-    return result;
-}
-
 bool InstallHook(void* target, void* detour, void** original)
 {
     const MH_STATUS created = MH_CreateHook(target, detour, original);
@@ -1930,10 +1571,9 @@ bool ReadHookPatch(void* target, std::array<unsigned char, 8>& patch)
     }
 }
 
-std::array<void*, 4> HookTargets()
+std::array<void*, 3> HookTargets()
 {
-    return {g_callHookTarget, g_isNameAllowedTarget, g_luaPCallTarget,
-        g_triggerServerEventTarget};
+    return {g_callHookTarget, g_isNameAllowedTarget, g_triggerServerEventTarget};
 }
 
 void CaptureHookPatches()
@@ -1970,11 +1610,7 @@ bool RepairHooks()
 
 void RemoveHooks()
 {
-    if(g_luaPCallTarget)
-    {
-        MH_DisableHook(g_luaPCallTarget);
-        MH_RemoveHook(g_luaPCallTarget);
-    }
+    ClearEventCatchers(true);
     if(g_isNameAllowedTarget)
     {
         MH_DisableHook(g_isNameAllowedTarget);
@@ -1990,19 +1626,13 @@ void RemoveHooks()
         MH_DisableHook(g_triggerServerEventTarget);
         MH_RemoveHook(g_triggerServerEventTarget);
     }
-    g_luaPCallTarget = nullptr;
     g_isNameAllowedTarget = nullptr;
     g_callHookTarget = nullptr;
     g_triggerServerEventTarget = nullptr;
     g_clientModule = nullptr;
     g_hookPatches = {};
     g_hookPatchValid = {};
-    g_luaPCall = nullptr;
-    g_luaGetField = nullptr;
-    g_luaSetTop = nullptr;
     g_luaNewThread = nullptr;
-    g_luaLRef = nullptr;
-    g_luaLUnref = nullptr;
     g_isNameAllowed = nullptr;
     g_callHook = nullptr;
     g_triggerServerEvent = nullptr;
@@ -2010,15 +1640,10 @@ void RemoveHooks()
     g_addEvent = nullptr;
     g_addEventHandler = nullptr;
     g_removeEventHandler = nullptr;
-    g_loadString = nullptr;
     g_getVirtualMachine = nullptr;
     g_luaManagerSlot = nullptr;
     g_clientGameSlot = nullptr;
     g_debugHookManagerOffset = 0;
-    g_luaType = nullptr;
-    g_luaPushNil = nullptr;
-    g_luaNext = nullptr;
-    g_luaPushValue = nullptr;
     g_addDebugHook = nullptr;
     g_removeDebugHook = nullptr;
     g_luaMToRef = nullptr;
@@ -2030,16 +1655,14 @@ void RemoveHooks()
     g_bootstrapState.store(0, std::memory_order_release);
     g_bootstrapLua.store(nullptr, std::memory_order_release);
     g_bootstrapMain.store(nullptr, std::memory_order_release);
+    g_bootstrapError.clear();
     g_reconnectCheckTick.store(0, std::memory_order_release);
+    g_runtimePulseTick.store(0, std::memory_order_release);
     g_tramState.store(0, std::memory_order_release);
     g_tramSession.store(0, std::memory_order_release);
     g_tramRetryTick.store(0, std::memory_order_release);
     g_tramUiReadyLogged.store(false, std::memory_order_release);
     g_sessions.clear();
-    {
-        std::scoped_lock lock(g_catcherMutex);
-        g_eventCatchers.clear();
-    }
     GuiClearLuaThreads();
     GuiResetTramState();
     g_ready.store(false, std::memory_order_release);
@@ -2052,6 +1675,29 @@ std::uintptr_t Find(const SignatureScanner& scanner, std::string_view pattern,
     Log::Scan(name, address ? L"found" : L"not_found", address);
     return address;
 }
+}
+
+void PulseLuaBridge()
+{
+    std::unique_lock lock(g_installMutex, std::try_to_lock);
+    if(!lock.owns_lock() || !g_ready.load(std::memory_order_acquire))
+        return;
+    HWND window = ProcessWindow();
+    DWORD windowThread{};
+    if(window)
+        windowThread = GetWindowThreadProcessId(window, nullptr);
+    if(windowThread && windowThread != GetCurrentThreadId())
+        return;
+    const DWORD now = GetTickCount();
+    DWORD checked = g_runtimePulseTick.load(std::memory_order_relaxed);
+    if(now - checked < 50 || !g_runtimePulseTick.compare_exchange_strong(
+        checked, now, std::memory_order_relaxed))
+    {
+        return;
+    }
+    ResetForReconnect();
+    RunDirectBootstrap();
+    TryStartTramBot();
 }
 
 bool PlayTramAlertSignal()
@@ -2117,34 +1763,20 @@ bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory)
     }
 
     BuildBootstrapPayload(loaderDirectory);
+    if(!DarkFlameLuaParserSelfTest())
+    {
+        Log::Write(L"[lua-bridge] private embedded runtime self-test failed");
+        return false;
+    }
+    Log::Write(L"[lua-bridge] private embedded runtime self-test passed");
 
     const SignatureScanner scanner(client);
     const std::uintptr_t isNameAllowed = Find(scanner, IsNameAllowedPattern,
         L"CDebugHookManager::IsNameAllowed");
     const std::uintptr_t callHook = Find(scanner, CallHookPattern,
         L"CDebugHookManager::CallHook");
-    const std::uintptr_t luaPCall = Find(scanner, LuaPCallPattern, L"lua_pcall");
-    const std::uintptr_t pushCClosure = Find(scanner, LuaPushCClosurePattern,
-        L"lua_pushcclosure");
-    const std::uintptr_t setField = Find(scanner, LuaSetFieldPattern,
-        L"lua_setfield");
-    const std::uintptr_t pushBoolean = Find(scanner, LuaPushBooleanPattern,
-        L"lua_pushboolean");
-    const std::uintptr_t toBoolean = Find(scanner, LuaToBooleanPattern,
-        L"lua_toboolean");
-    const std::uintptr_t toLString = Find(scanner, LuaToLStringPattern,
-        L"lua_tolstring");
-    const std::uintptr_t pushString = Find(scanner, LuaPushStringPattern,
-        L"lua_pushstring");
-    const std::uintptr_t getTop = Find(scanner, LuaGetTopPattern, L"lua_gettop");
-    const std::uintptr_t getField = Find(scanner, LuaGetFieldPattern,
-        L"lua_getfield");
-    const std::uintptr_t setTop = Find(scanner, LuaSetTopPattern, L"lua_settop");
     const std::uintptr_t newThread = Find(scanner, LuaNewThreadPattern,
         L"lua_newthread");
-    const std::uintptr_t luaLRef = Find(scanner, LuaLRefPattern, L"luaL_ref");
-    const std::uintptr_t luaLUnref = Find(scanner, LuaLUnrefPattern,
-        L"luaL_unref");
     const std::uintptr_t getLuaFunction = Find(scanner,
         LuaFunctionRegistryPattern,
         L"CLuaCFunctions::GetFunction");
@@ -2160,43 +1792,19 @@ bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory)
         L"luaM_toref");
     const std::uintptr_t luaFunctionRefDtor = Find(scanner,
         LuaFunctionRefDtorPattern, L"CLuaFunctionRef::~CLuaFunctionRef");
-    const std::uintptr_t luaType = Find(scanner, LuaTypePattern, L"lua_type");
-    const std::uintptr_t luaPushNil = Find(scanner, LuaPushNilPattern,
-        L"lua_pushnil");
-    const std::uintptr_t luaNext = Find(scanner, LuaNextPattern, L"lua_next");
-    const std::uintptr_t luaPushValue = Find(scanner, LuaPushValuePattern,
-        L"lua_pushvalue");
     const std::uintptr_t clientGameAccess = Find(scanner,
         ClientGameDebugHookAccessPattern, L"g_pClientGame debug-hook access");
-    if(!isNameAllowed || !callHook || !luaPCall || !pushCClosure || !setField
-        || !pushBoolean || !toBoolean || !toLString || !pushString || !getTop
-        || !getField || !setTop || !newThread || !luaLRef || !luaLUnref
+    if(!isNameAllowed || !callHook || !newThread
         || !getLuaFunction || !getVirtualMachine || !luaManagerLoad
         || !addDebugHook || !removeDebugHook || !luaMToRef
-        || !luaFunctionRefDtor || !luaType || !luaPushNil || !luaNext
-        || !luaPushValue
+        || !luaFunctionRefDtor
         || !clientGameAccess)
     {
         Log::Write(L"[lua-bridge] signature resolution failed");
         return false;
     }
 
-    g_luaPushCClosure = reinterpret_cast<LuaPushCClosureFn>(pushCClosure);
-    g_luaSetField = reinterpret_cast<LuaSetFieldFn>(setField);
-    g_luaPushBoolean = reinterpret_cast<LuaPushBooleanFn>(pushBoolean);
-    g_luaToBoolean = reinterpret_cast<LuaToBooleanFn>(toBoolean);
-    g_luaToLString = reinterpret_cast<LuaToLStringFn>(toLString);
-    g_luaPushString = reinterpret_cast<LuaPushStringFn>(pushString);
-    g_luaGetTop = reinterpret_cast<LuaGetTopFn>(getTop);
-    g_luaGetField = reinterpret_cast<LuaGetFieldFn>(getField);
-    g_luaSetTop = reinterpret_cast<LuaSetTopFn>(setTop);
     g_luaNewThread = reinterpret_cast<LuaNewThreadFn>(newThread);
-    g_luaLRef = reinterpret_cast<LuaLRefFn>(luaLRef);
-    g_luaLUnref = reinterpret_cast<LuaLUnrefFn>(luaLUnref);
-    g_luaType = reinterpret_cast<LuaTypeFn>(luaType);
-    g_luaPushNil = reinterpret_cast<LuaPushNilFn>(luaPushNil);
-    g_luaNext = reinterpret_cast<LuaNextFn>(luaNext);
-    g_luaPushValue = reinterpret_cast<LuaPushValueFn>(luaPushValue);
     g_addDebugHook = reinterpret_cast<AddDebugHookFn>(addDebugHook);
     g_removeDebugHook = reinterpret_cast<RemoveDebugHookFn>(removeDebugHook);
     g_luaMToRef = reinterpret_cast<LuaMToRefFn>(luaMToRef);
@@ -2215,10 +1823,9 @@ bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory)
     }
     g_isNameAllowedTarget = reinterpret_cast<void*>(isNameAllowed);
     g_callHookTarget = reinterpret_cast<void*>(callHook);
-    g_luaPCallTarget = reinterpret_cast<void*>(luaPCall);
     for(DWORD waited = 0; waited <= 5000
         && (!g_triggerServerEventTarget || !g_triggerEvent || !g_addEvent
-            || !g_addEventHandler || !g_removeEventHandler || !g_loadString);
+            || !g_addEventHandler || !g_removeEventHandler);
         waited += 10)
     {
         if(!g_triggerServerEventTarget)
@@ -2241,10 +1848,8 @@ bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory)
             g_removeEventHandler = FindRegisteredLuaFunction(getLuaFunction,
                 "removeEventHandler");
         }
-        if(!g_loadString)
-            g_loadString = FindRegisteredLuaFunction(getLuaFunction, "loadstring");
         if((!g_triggerServerEventTarget || !g_triggerEvent || !g_addEvent
-            || !g_addEventHandler || !g_removeEventHandler || !g_loadString)
+            || !g_addEventHandler || !g_removeEventHandler)
             && waited != 5000)
         {
             Sleep(10);
@@ -2265,11 +1870,8 @@ bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory)
     Log::Scan(L"CLuaFunctionDefs::RemoveEventHandler",
         g_removeEventHandler ? L"resolved" : L"not_found",
         reinterpret_cast<std::uintptr_t>(g_removeEventHandler));
-    Log::Scan(L"native Lua compiler wrapper",
-        g_loadString ? L"resolved" : L"not_found",
-        reinterpret_cast<std::uintptr_t>(g_loadString));
     if(!g_triggerServerEventTarget || !g_triggerEvent || !g_addEvent
-        || !g_addEventHandler || !g_removeEventHandler || !g_loadString)
+        || !g_addEventHandler || !g_removeEventHandler)
     {
         Log::Write(L"[lua-bridge] direct alias registry lookup failed");
         return false;
@@ -2282,8 +1884,6 @@ bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory)
         || !InstallHook(g_isNameAllowedTarget,
         reinterpret_cast<void*>(&HookIsNameAllowed),
         reinterpret_cast<void**>(&g_isNameAllowed))
-        || !InstallHook(g_luaPCallTarget, reinterpret_cast<void*>(&HookLuaPCall),
-            reinterpret_cast<void**>(&g_luaPCall))
         || !InstallHook(g_triggerServerEventTarget,
             reinterpret_cast<void*>(&HookTriggerServerEvent),
             reinterpret_cast<void**>(&g_triggerServerEvent)))
@@ -2297,7 +1897,9 @@ bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory)
     g_bootstrapState.store(0, std::memory_order_release);
     g_bootstrapLua.store(nullptr, std::memory_order_release);
     g_bootstrapMain.store(nullptr, std::memory_order_release);
+    g_bootstrapError.clear();
     g_reconnectCheckTick.store(0, std::memory_order_release);
+    g_runtimePulseTick.store(0, std::memory_order_release);
     g_tramState.store(0, std::memory_order_release);
     g_tramSession.store(0, std::memory_order_release);
     g_tramRetryTick.store(0, std::memory_order_release);

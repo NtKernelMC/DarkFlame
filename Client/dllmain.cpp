@@ -243,7 +243,7 @@ DWORD WINAPI HookWatchdog(void*)
                 if(g_antiShadow)
                     UpdatePrivacyClient(client);
                 if(!RepairLuaArgsHook(client))
-                    StartLuaArgsHook(client, g_loaderDirectory);
+                   StartLuaArgsHook(client, g_loaderDirectory);
             }
         }
         else if(tracked)
