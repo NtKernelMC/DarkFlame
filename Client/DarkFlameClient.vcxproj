@@ -70,6 +70,7 @@
     <ClCompile Include="privacy_hooks.cpp" />
     <ClCompile Include="signature_scanner.cpp" />
     <ClCompile Include="text_display_hook.cpp" />
+    <ClCompile Include="track_cleaner.cpp" />
     <ClCompile Include="third_party\mta_lua\lapi.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="third_party\mta_lua\lcode.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="third_party\mta_lua\ldebug.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
@@ -143,6 +144,7 @@
     <ClInclude Include="privacy_hooks.h" />
     <ClInclude Include="signature_scanner.h" />
     <ClInclude Include="text_display_hook.h" />
+    <ClInclude Include="track_cleaner.h" />
     <ClInclude Include="netc_bitstream.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="third_party\imgui\imgui.h" />

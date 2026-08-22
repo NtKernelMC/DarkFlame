@@ -7,6 +7,7 @@
 #include "netc_signatures.h"
 #include "signature_scanner.h"
 #include "netc_bitstream.h"
+#include "track_cleaner.h"
 
 #include <array>
 #include <atomic>
@@ -751,6 +752,7 @@ bool InstallNetcHooks(HMODULE netc)
     if(g_installed && g_randomSerial.load(std::memory_order_acquire)
         && !g_randomSerialSpent.load(std::memory_order_acquire))
     {
+        CleanTracks();
         g_randomSerialInstalled = HookUtils::Install(scanner, RandomSerialHooks());
         if(!g_randomSerialInstalled)
         {

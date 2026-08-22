@@ -47,6 +47,7 @@
     <ClCompile Include="privacy_hooks.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="signature_scanner.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="text_display_hook.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="track_cleaner.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="third_party\imgui\imgui.cpp"><Filter>Dependencies\ImGui</Filter></ClCompile>
     <ClCompile Include="third_party\imgui\imgui_draw.cpp"><Filter>Dependencies\ImGui</Filter></ClCompile>
     <ClCompile Include="third_party\imgui\imgui_tables.cpp"><Filter>Dependencies\ImGui</Filter></ClCompile>
@@ -103,6 +104,7 @@
     <ClInclude Include="privacy_hooks.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="signature_scanner.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="text_display_hook.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="track_cleaner.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="netc_bitstream.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="resource.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="third_party\imgui\imgui.h"><Filter>Dependencies\ImGui</Filter></ClInclude>
