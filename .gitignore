@@ -79,3 +79,4 @@ vcpkg_installed/
 Testing/
 .cache/
 /RE
+/.codex-temp-dia2dump
