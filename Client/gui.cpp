@@ -620,8 +620,6 @@ void SyncThreads()
 
 void QueueTramCommand(std::string command)
 {
-    Log::Write(L"[trambot] GUI command queued: "
-        + std::wstring(command.begin(), command.end()));
     std::scoped_lock lock(g_bridgeMutex);
     if(g_tramCommands.size() >= 64)
         g_tramCommands.pop_front();
@@ -797,7 +795,6 @@ void RenderMenu()
         extent(280.0f, 65.0f), g_activeTab == 2, draw, scale);
     DrawTab("##tab_tram", "TramBot", 3, point(1035.0f, 421.0f),
         extent(280.0f, 65.0f), g_activeTab == 3, draw, scale);
-
     const ImVec2 contentPosition = point(105.0f, 495.0f);
     const ImVec2 contentSize = extent(1326.0f,
         g_activeTab == 0 ? 285.0f : 310.0f);

@@ -5,6 +5,8 @@
 
 #include <MinHook.h>
 
+#include <array>
+#include <cstring>
 #include <span>
 #include <string>
 #include <string_view>
@@ -18,7 +20,48 @@ struct Hook
     void* detour{};
     void** original{};
     void* target{};
+    std::array<unsigned char, 8> patch{};
+    bool patchValid{};
 };
+
+inline bool ReadPatch(Hook& hook)
+{
+    if(!hook.target)
+        return false;
+    MEMORY_BASIC_INFORMATION info{};
+    if(!VirtualQuery(hook.target, &info, sizeof(info)) || info.State != MEM_COMMIT
+        || (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
+        return false;
+    __try
+    {
+        std::memcpy(hook.patch.data(), hook.target, hook.patch.size());
+        hook.patchValid = true;
+        return true;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER)
+    {
+        hook.patchValid = false;
+        return false;
+    }
+}
+
+inline bool PatchIntact(const Hook& hook)
+{
+    if(!hook.target || !hook.patchValid)
+        return false;
+    MEMORY_BASIC_INFORMATION info{};
+    if(!VirtualQuery(hook.target, &info, sizeof(info)) || info.State != MEM_COMMIT
+        || (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
+        return false;
+    __try
+    {
+        return !std::memcmp(hook.patch.data(), hook.target, hook.patch.size());
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
+}
 
 inline std::wstring Failure(std::wstring_view operation, MH_STATUS status)
 {
@@ -38,6 +81,8 @@ inline void Remove(std::span<Hook> hooks)
         MH_RemoveHook(hook.target);
         if (hook.original)
             *hook.original = nullptr;
+        hook.target = nullptr;
+        hook.patchValid = false;
     }
 }
 
@@ -70,7 +115,7 @@ inline bool Install(const SignatureScanner& scanner, std::span<Hook> hooks)
         {
             Log::Scan(hook.name, Failure(L"hook_create", status),
                 reinterpret_cast<std::uintptr_t>(hook.target));
-            Remove(hooks.first(created));
+            Remove(hooks.first(created + 1));
             return false;
         }
         ++created;
@@ -96,8 +141,39 @@ inline bool Install(const SignatureScanner& scanner, std::span<Hook> hooks)
         return false;
     }
 
-    for (const Hook& hook : hooks)
+    for (Hook& hook : hooks)
+    {
+        ReadPatch(hook);
         Log::Scan(hook.name, L"hook_installed", reinterpret_cast<std::uintptr_t>(hook.target));
+    }
+    return true;
+}
+
+inline bool Repair(std::span<Hook> hooks)
+{
+    for(Hook& hook : hooks)
+    {
+        if(PatchIntact(hook))
+            continue;
+        const MH_STATUS disabled = MH_DisableHook(hook.target);
+        if(disabled != MH_OK && disabled != MH_ERROR_DISABLED)
+        {
+            Log::Scan(hook.name, Failure(L"hook_repair_disable", disabled),
+                reinterpret_cast<std::uintptr_t>(hook.target));
+            return false;
+        }
+        const MH_STATUS enabled = MH_EnableHook(hook.target);
+        if(enabled != MH_OK && enabled != MH_ERROR_ENABLED)
+        {
+            Log::Scan(hook.name, Failure(L"hook_repair_enable", enabled),
+                reinterpret_cast<std::uintptr_t>(hook.target));
+            return false;
+        }
+        if(!ReadPatch(hook))
+            return false;
+        Log::Scan(hook.name, L"hook_restored",
+            reinterpret_cast<std::uintptr_t>(hook.target));
+    }
     return true;
 }
 }

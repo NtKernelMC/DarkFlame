@@ -18,6 +18,13 @@
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="launcher.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\Client\third_party\imgui\imgui.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\Client\third_party\imgui\imgui_draw.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\Client\third_party\imgui\imgui_tables.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\Client\third_party\imgui\imgui_widgets.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\Client\third_party\imgui\backends\imgui_impl_dx9.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\Client\third_party\imgui\backends\imgui_impl_win32.cpp"><Filter>Source Files</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="bootstrap_ipc.h">
@@ -26,6 +33,11 @@
     <ClInclude Include="console.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="config.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="launcher.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="loader_resources.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="path_utils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -50,6 +62,7 @@
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="DarkFlameLoader.rc" />
+    <ResourceCompile Include="DarkFlameAssets.rc" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="purple_flame_icon.ico" />

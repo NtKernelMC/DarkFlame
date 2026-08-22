@@ -25,6 +25,10 @@ namespace
         Environment::Clear(BootstrapProtocol::ClientPathVariable);
         Environment::Clear(BootstrapProtocol::AgentReadyEventVariable);
         Environment::Clear(BootstrapProtocol::ClientLoadedEventVariable);
+        Environment::Clear(BootstrapProtocol::AntiShadowVariable);
+        Environment::Clear(BootstrapProtocol::SetSerialVariable);
+        Environment::Clear(BootstrapProtocol::RandomSerialVariable);
+        Environment::Clear(BootstrapProtocol::PublicSerialVariable);
     }
 
     void CloseClientLoadedEvent()

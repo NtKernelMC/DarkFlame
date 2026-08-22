@@ -56,4 +56,11 @@ inline constexpr std::string_view ScanModuleIntegrity =
 inline constexpr std::string_view SendPacket =
     "55 8B EC 6A FF 68 ? ? ? ? 64 A1 ? ? ? ? 50 81 EC ? ? ? ? A1 ? ? ? ? 33 C5 "
     "89 45 F0 56 57 50 8D 45 F4 64 A3 ? ? ? ? 8B F1 89 B5 ? ? ? ? 8B 7D 0C";
+
+inline constexpr std::string_view RakPeerSendBitStreamOrBuffer =
+    "55 8B EC 56 57 8B 7D ? 8B F1 ? ? 83 C0";
+
+inline constexpr std::string_view DiskDriveSerial =
+    "55 8B EC 6A ? 68 ? ? ? ? 64 A1 ? ? ? ? 50 83 EC ? 56 57 A1 ? ? ? ? "
+    "33 C5 50 8D 45 ? 64 A3 ? ? ? ? 8B 4D ? 8D 51";
 }

@@ -232,6 +232,7 @@ DWORD WINAPI DumpThread(void* parameter)
     }
     else
         Log::Write(L"[dump] client.dll memory dump failed");
+    g_scheduled.store(false, std::memory_order_release);
     FreeLibrary(work->module);
     return written ? 0 : 1;
 }

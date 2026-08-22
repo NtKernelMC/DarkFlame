@@ -9,6 +9,7 @@
 #include <mmsystem.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <cctype>
@@ -98,7 +99,7 @@ constexpr char LuaBootstrap[] = R"DFLUA(
 local O,G=false,0
 local TS,TL=triggerServerEvent,triggerLatentServerEvent
 local R=getThisResource()
-local Global=_G
+local Global=getfenv(0)
 local PCall,Raise,Kind=pcall,error,type
 local RawSet,SetMeta=rawset,setmetatable
 local Scope=dfTrapScope
@@ -248,16 +249,17 @@ std::atomic_uint32_t g_bootstrapState{};
 std::atomic<void*> g_bootstrapLua{};
 std::atomic<void*> g_bootstrapMain{};
 std::atomic<DWORD> g_reconnectCheckTick{};
-std::atomic_uint32_t g_tramBootstrapState{};
+std::atomic_uint32_t g_tramState{};
+std::atomic_uintptr_t g_tramSession{};
 std::atomic<DWORD> g_tramRetryTick{};
-std::atomic_bool g_tramResourceSeen{};
-std::atomic<DWORD> g_tramResourceThread{};
-std::atomic_bool g_tramFallbackLogged{};
 std::atomic_bool g_tramUiReadyLogged{};
-void* g_tramOwner{};
-void* g_tramMain{};
-std::wstring g_tramScriptPath;
+HMODULE g_clientModule{};
+std::array<std::array<unsigned char, 8>, 4> g_hookPatches{};
+std::array<bool, 4> g_hookPatchValid{};
 std::mutex g_installMutex;
+std::wstring g_tramScriptPath;
+std::string g_bootstrapPayload;
+std::string g_tramPayload;
 void* g_isNameAllowedTarget{};
 void* g_callHookTarget{};
 void* g_luaPCallTarget{};
@@ -270,6 +272,7 @@ LuaCFunction g_triggerEvent{};
 LuaCFunction g_addEvent{};
 LuaCFunction g_addEventHandler{};
 LuaCFunction g_removeEventHandler{};
+LuaCFunction g_loadString{};
 GetVirtualMachineFn g_getVirtualMachine{};
 void** g_luaManagerSlot{};
 void** g_clientGameSlot{};
@@ -434,12 +437,6 @@ int __cdecl TrapScope(void* lua)
     return 1;
 }
 
-int __cdecl BootstrapCode(void* lua)
-{
-    g_luaPushString(lua, LuaBootstrap);
-    return 1;
-}
-
 int __cdecl TakeLuaCode(void* lua)
 {
     DrainThreadRequests();
@@ -549,56 +546,9 @@ void RegisterBridge(void* lua)
     Register(lua, "hideFunctionCall", &HideFunctionCall);
     Register(lua, "dfTrapScope", &TrapScope);
     Register(lua, "dfHideActive", &HideActive);
-    Register(lua, "dfBootstrap", &BootstrapCode);
     Register(lua, "dfTake", &TakeLuaCode);
     Register(lua, "dfInject", &InjectResource);
     Register(lua, "dfEmit", &EmitEvent);
-}
-
-bool RunDirectBootstrap(void* lua)
-{
-    std::uint32_t expected{};
-    if(!g_bootstrapState.compare_exchange_strong(expected, 1,
-        std::memory_order_acq_rel, std::memory_order_acquire))
-    {
-        return false;
-    }
-
-    const int top = g_luaGetTop(lua);
-    g_scopeDepth.fetch_add(1, std::memory_order_acq_rel);
-
-    RegisterBridge(lua);
-    g_luaGetField(lua, LuaGlobalsIndex, "loadstring");
-    g_luaPushString(lua, LuaBootstrap);
-    int result = g_luaPCall(lua, 1, 1, 0);
-    std::string error;
-    if(result)
-        error = "compile: " + LuaText(lua, -1);
-    else
-    {
-        result = g_luaPCall(lua, 0, 0, 0);
-        if(result)
-            error = "runtime: " + LuaText(lua, -1);
-    }
-
-    g_luaSetTop(lua, top);
-    g_scopeDepth.fetch_sub(1, std::memory_order_acq_rel);
-    if(!result)
-    {
-        void* owner{};
-        void* state = lua;
-        LuaIdentity(lua, owner, state);
-        g_bootstrapMain.store(owner, std::memory_order_release);
-        g_bootstrapLua.store(state, std::memory_order_release);
-        g_bootstrapState.store(2, std::memory_order_release);
-        return true;
-    }
-
-    g_bootstrapLua.store(nullptr, std::memory_order_release);
-    g_bootstrapMain.store(nullptr, std::memory_order_release);
-    g_bootstrapState.store(0, std::memory_order_release);
-    Log::Write(L"[lua-bridge] direct bootstrap failed: " + WideAscii(error));
-    return true;
 }
 
 void LogMonitorDecision(const char* name, bool allowed,
@@ -1244,9 +1194,9 @@ std::string ManagedChunk(std::uintptr_t id, std::string_view userCode)
         "if o then T(function() B.removeCommandHandler(n,f) end) end return o end "
         "E.createElement=function(...) local e=B.createElement(...) "
         "if e then T(function() if B.isElement(e) then B.destroyElement(e) end end) end return e end "
-        "B.setmetatable(E,{__index=B}) "
-        "local F,X=B.loadstring(" + LuaLiteral(userCode) + ") "
-        "if not F then B.error(X,0) end B.setfenv(F,E) S[K]={cleanup=C} "
+        "B.setmetatable(E,{__index=B}) local function F(...)\n";
+    code.append(userCode);
+    code += "\nend B.setfenv(F,E) S[K]={cleanup=C} "
         "local O,R=B.pcall(F) if not O then B.error(R,0) end return R";
     return code;
 }
@@ -1262,12 +1212,16 @@ std::string CleanupChunk(std::uintptr_t id)
 bool RunLuaChunk(void* lua, std::string_view code, std::string& error)
 {
     const int top = g_luaGetTop(lua);
-    g_luaGetField(lua, LuaGlobalsIndex, "loadstring");
+    if(top || !g_loadString)
+    {
+        error = top ? "native compiler requires an empty Lua stack"
+            : "native compiler wrapper unavailable";
+        return false;
+    }
     const std::string source(code);
     g_luaPushString(lua, source.c_str());
-    int result = g_luaPCall(lua, 1, 1, 0);
-    if(!result)
-        result = g_luaPCall(lua, 0, 0, 0);
+    const int values = g_loadString(lua);
+    int result = values == 1 ? g_luaPCall(lua, 0, 0, 0) : 1;
     if(result)
         error = LuaText(lua, -1, 2048, false);
     g_luaSetTop(lua, top);
@@ -1291,7 +1245,7 @@ void RemoveSession(std::vector<LuaSession>::iterator session, bool release)
     {
         std::string ignored;
         g_scopeDepth.fetch_add(1, std::memory_order_acq_rel);
-        RunLuaChunk(session->main, CleanupChunk(id), ignored);
+        RunLuaChunk(session->thread, CleanupChunk(id), ignored);
         g_luaLUnref(session->main, LuaRegistryIndex, session->reference);
         g_scopeDepth.fetch_sub(1, std::memory_order_acq_rel);
     }
@@ -1356,7 +1310,7 @@ bool InjectIntoResource(std::string_view resource, std::string_view code,
     if(!executed)
     {
         std::string ignored;
-        RunLuaChunk(target.state, CleanupChunk(id), ignored);
+        RunLuaChunk(thread, CleanupChunk(id), ignored);
         g_luaLUnref(target.state, LuaRegistryIndex, reference);
         return false;
     }
@@ -1384,52 +1338,6 @@ void DrainThreadRequests()
     }
 }
 
-void ResetForReconnect()
-{
-    if(g_bootstrapState.load(std::memory_order_acquire) != 2)
-        return;
-    void* previous = g_bootstrapLua.load(std::memory_order_acquire);
-    void* owner = g_bootstrapMain.load(std::memory_order_acquire);
-    if(!previous || !owner)
-        return;
-    const DWORD now = GetTickCount();
-    DWORD checked = g_reconnectCheckTick.load(std::memory_order_relaxed);
-    if(now - checked < 1000 || !g_reconnectCheckTick.compare_exchange_strong(
-        checked, now, std::memory_order_relaxed))
-    {
-        return;
-    }
-    if(LuaStateAlive(previous, owner))
-        return;
-
-    std::uint32_t expected = 2;
-    if(!g_bootstrapState.compare_exchange_strong(expected, 0,
-        std::memory_order_acq_rel, std::memory_order_acquire))
-    {
-        return;
-    }
-    g_bootstrapLua.store(nullptr, std::memory_order_release);
-    g_bootstrapMain.store(nullptr, std::memory_order_release);
-    g_reconnectCheckTick.store(0, std::memory_order_release);
-    g_tramBootstrapState.store(0, std::memory_order_release);
-    g_tramRetryTick.store(0, std::memory_order_release);
-    g_tramResourceSeen.store(false, std::memory_order_release);
-    g_tramResourceThread.store(0, std::memory_order_release);
-    g_tramFallbackLogged.store(false, std::memory_order_release);
-    g_tramUiReadyLogged.store(false, std::memory_order_release);
-    g_tramOwner = nullptr;
-    g_tramMain = nullptr;
-    g_sessions.clear();
-    {
-        std::scoped_lock lock(g_catcherMutex);
-        g_eventCatchers.clear();
-    }
-    GuiClearLuaThreads();
-    GuiResetTramState();
-    g_hideCalls.store(false, std::memory_order_release);
-    g_scopeDepth.store(0, std::memory_order_release);
-}
-
 bool ReadTramScript(std::string& code, std::string& error)
 {
     code.clear();
@@ -1438,7 +1346,6 @@ bool ReadTramScript(std::string& code, std::string& error)
         error = "DarkFlame directory is unavailable";
         return false;
     }
-    Log::Write(L"[trambot] reading external script: " + g_tramScriptPath);
     HANDLE file = CreateFileW(g_tramScriptPath.c_str(), GENERIC_READ,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -1478,96 +1385,185 @@ bool ReadTramScript(std::string& code, std::string& error)
         error = "TramBot.lua contains a zero byte";
         return false;
     }
-    Log::Write(L"[trambot] external script read: "
-        + std::to_wstring(code.size()) + L" bytes");
     return true;
 }
 
-void ForgetTramCatchers()
+void BuildBootstrapPayload(std::wstring_view loaderDirectory)
 {
-    if(!g_tramOwner || !g_tramMain)
-        return;
-    std::scoped_lock lock(g_catcherMutex);
-    const auto end = std::remove_if(g_eventCatchers.begin(), g_eventCatchers.end(),
-        [](const EventCatcher& item)
+    g_tramScriptPath = loaderDirectory.empty() ? std::wstring{}
+        : std::wstring(loaderDirectory) + L"\\TramBot.lua";
+    g_bootstrapPayload.assign(LuaBootstrap);
+    g_tramPayload.clear();
+    std::string tram;
+    std::string error;
+    if(ReadTramScript(tram, error))
     {
-        return item.owner == g_tramOwner && item.main == g_tramMain;
-    });
-    g_eventCatchers.erase(end, g_eventCatchers.end());
+        g_tramPayload = std::move(tram);
+        Log::Write(L"[trambot] direct bootstrap core ready: "
+            + std::to_wstring(g_bootstrapPayload.size())
+            + L" bytes; TramBot staged: "
+            + std::to_wstring(g_tramPayload.size()) + L" bytes");
+        return;
+    }
+    GuiUpdateTramState("loaded", "0");
+    GuiUpdateTramState("status", error);
+    Log::Write(L"[trambot] direct bootstrap contains core only: "
+        + WideAscii(error));
 }
 
-void TryStartTramBot(void* lua)
+bool SetHideFunctionCall(void* lua, bool enabled, std::string& error)
 {
-    if(!lua || !g_tramResourceSeen.load(std::memory_order_acquire)
-        || g_tramResourceThread.load(std::memory_order_acquire)
-            != GetCurrentThreadId()
-        || CurrentLuaResource(lua) != "province_tram")
-    {
-        return;
-    }
-    if(g_tramBootstrapState.load(std::memory_order_acquire) == 2)
-    {
-        if(LuaStateAlive(g_tramMain, g_tramOwner))
-        {
-            g_tramResourceSeen.store(false, std::memory_order_release);
-            return;
-        }
-        ForgetTramCatchers();
-        g_tramOwner = nullptr;
-        g_tramMain = nullptr;
-        g_tramBootstrapState.store(0, std::memory_order_release);
-        GuiResetTramState();
-    }
+    const int top = g_luaGetTop(lua);
+    g_luaGetField(lua, LuaGlobalsIndex, "hideFunctionCall");
+    g_luaPushBoolean(lua, enabled ? 1 : 0);
+    const int result = g_luaPCall(lua, 1, 0, 0);
+    if(result)
+        error = LuaText(lua, -1, 2048, false);
+    g_luaSetTop(lua, top);
+    return result == 0;
+}
 
-    const DWORD now = GetTickCount();
-    DWORD checked = g_tramRetryTick.load(std::memory_order_relaxed);
-    if(now - checked < 1000 || !g_tramRetryTick.compare_exchange_strong(
-        checked, now, std::memory_order_relaxed))
-    {
+void RunDirectBootstrap(void* lua)
+{
+    if(g_bootstrapPayload.empty())
         return;
-    }
     std::uint32_t expected{};
-    if(!g_tramBootstrapState.compare_exchange_strong(expected, 1,
+    if(!g_bootstrapState.compare_exchange_strong(expected, 3,
         std::memory_order_acq_rel, std::memory_order_acquire))
     {
         return;
     }
 
-    std::string code;
-    std::string error;
+    RegisterBridge(lua);
     void* owner{};
-    void* main{};
-    if(!LuaIdentity(lua, owner, main))
+    void* main = lua;
+    LuaIdentity(lua, owner, main);
+    const int top = g_luaGetTop(lua);
+    void* thread = g_luaNewThread(lua);
+    const int reference = thread
+        ? g_luaLRef(lua, LuaRegistryIndex) : -1;
+    g_luaSetTop(lua, top);
+    std::string error;
+    if(!thread)
+        error = "lua_newthread failed";
+    const bool hidden = thread && SetHideFunctionCall(lua, true, error);
+    const bool executed = hidden && thread
+        && RunLuaChunk(thread, g_bootstrapPayload, error);
+    std::string restoreError;
+    if(hidden)
+        SetHideFunctionCall(lua, false, restoreError);
+    g_hideCalls.store(false, std::memory_order_release);
+    if(reference >= 0)
+        g_luaLUnref(lua, LuaRegistryIndex, reference);
+
+    if(executed && owner)
     {
-        error = "province_tram VM identity is unavailable";
-    }
-    else if(ReadTramScript(code, error))
-    {
-        RegisterDirectAliases(lua);
-        g_scopeDepth.fetch_add(1, std::memory_order_acq_rel);
-        const bool started = RunLuaChunk(lua, code, error);
-        g_scopeDepth.fetch_sub(1, std::memory_order_acq_rel);
-        if(started)
-        {
-            g_tramOwner = owner;
-            g_tramMain = main;
-            g_tramResourceSeen.store(false, std::memory_order_release);
-            g_tramBootstrapState.store(2, std::memory_order_release);
-            Log::Write(L"[trambot] TramBot.lua started in province_tram: "
-                + g_tramScriptPath);
-            return;
-        }
+        g_bootstrapMain.store(owner, std::memory_order_release);
+        g_bootstrapLua.store(main, std::memory_order_release);
+        g_bootstrapState.store(2, std::memory_order_release);
+        Log::Write(L"[lua-bridge] hidden native compiler bootstrap started");
+        return;
     }
 
-    g_tramBootstrapState.store(0, std::memory_order_release);
+    if(error.empty())
+        error = owner ? "native compiler bootstrap failed"
+            : "Lua VM identity unavailable";
+    g_bootstrapLua.store(nullptr, std::memory_order_release);
+    g_bootstrapMain.store(nullptr, std::memory_order_release);
+    g_bootstrapState.store(0, std::memory_order_release);
+    GuiUpdateTramState("loaded", "0");
+    GuiUpdateTramState("status", error);
+    Log::Write(L"[lua-bridge] hidden native compiler bootstrap failed: "
+        + WideAscii(error));
+}
+
+void TryStartTramBot()
+{
+    if(g_bootstrapState.load(std::memory_order_acquire) != 2
+        || g_tramPayload.empty()
+        || g_tramState.load(std::memory_order_acquire) == 2)
+    {
+        return;
+    }
+    const DWORD now = GetTickCount();
+    DWORD checked = g_tramRetryTick.load(std::memory_order_relaxed);
+    if(now - checked < 500 || !g_tramRetryTick.compare_exchange_strong(
+        checked, now, std::memory_order_relaxed))
+    {
+        return;
+    }
+    std::uint32_t expected{};
+    if(!g_tramState.compare_exchange_strong(expected, 1,
+        std::memory_order_acq_rel, std::memory_order_acquire))
+    {
+        return;
+    }
+
+    std::uintptr_t id{};
+    std::string error;
+    if(InjectIntoResource("province_tram", g_tramPayload, id, error))
+    {
+        g_tramSession.store(id, std::memory_order_release);
+        g_tramState.store(2, std::memory_order_release);
+        Log::Write(L"[trambot] runtime injection started in province_tram: "
+            + WideAscii(ThreadKey(id)));
+        return;
+    }
+
+    g_tramState.store(0, std::memory_order_release);
     GuiUpdateTramState("loaded", "0");
     GuiUpdateTramState("status", error);
     static std::string previousError;
     if(error != previousError)
     {
         previousError = error;
-        Log::Write(L"[trambot] startup pending: " + WideAscii(error));
+        Log::Write(L"[trambot] runtime injection pending: " + WideAscii(error));
     }
+}
+
+void ResetForReconnect(bool immediate = false)
+{
+    if(g_bootstrapState.load(std::memory_order_acquire) != 2)
+        return;
+    void* previous = g_bootstrapLua.load(std::memory_order_acquire);
+    void* owner = g_bootstrapMain.load(std::memory_order_acquire);
+    if(!previous || !owner)
+        return;
+    const DWORD now = GetTickCount();
+    DWORD checked = g_reconnectCheckTick.load(std::memory_order_relaxed);
+    if(!immediate && (now - checked < 1000
+        || !g_reconnectCheckTick.compare_exchange_strong(checked, now,
+            std::memory_order_relaxed)))
+    {
+        return;
+    }
+    if(immediate)
+        g_reconnectCheckTick.store(now, std::memory_order_relaxed);
+    if(LuaStateAlive(previous, owner))
+        return;
+
+    std::uint32_t expected = 2;
+    if(!g_bootstrapState.compare_exchange_strong(expected, 0,
+        std::memory_order_acq_rel, std::memory_order_acquire))
+    {
+        return;
+    }
+    g_bootstrapLua.store(nullptr, std::memory_order_release);
+    g_bootstrapMain.store(nullptr, std::memory_order_release);
+    g_reconnectCheckTick.store(0, std::memory_order_release);
+    g_tramState.store(0, std::memory_order_release);
+    g_tramSession.store(0, std::memory_order_release);
+    g_tramRetryTick.store(0, std::memory_order_release);
+    g_tramUiReadyLogged.store(false, std::memory_order_release);
+    g_sessions.clear();
+    {
+        std::scoped_lock lock(g_catcherMutex);
+        g_eventCatchers.clear();
+    }
+    GuiClearLuaThreads();
+    GuiResetTramState();
+    g_hideCalls.store(false, std::memory_order_release);
+    g_scopeDepth.store(0, std::memory_order_release);
 }
 
 struct LuaFunctionNode
@@ -1892,39 +1888,14 @@ int __cdecl HookLuaPCall(void* lua, int argumentCount, int resultCount,
     int errorFunction)
 {
     const bool ready = g_ready.load(std::memory_order_acquire);
-    const bool tramVm = ready && CurrentLuaResource(lua) == "province_tram";
-    const bool relayArmed = tramVm
-        && g_tramResourceSeen.load(std::memory_order_acquire)
-        && g_tramResourceThread.load(std::memory_order_acquire)
-            == GetCurrentThreadId();
     if(ready)
+    {
         ResetForReconnect();
-    const bool tramCandidate = tramVm && (relayArmed
-        || g_tramBootstrapState.load(std::memory_order_acquire) != 2);
-    if(tramCandidate)
-    {
-        g_tramResourceSeen.store(true, std::memory_order_release);
-        g_tramResourceThread.store(GetCurrentThreadId(), std::memory_order_release);
-        g_tramRetryTick.store(0, std::memory_order_release);
-        if(!relayArmed && !g_tramFallbackLogged.exchange(true))
-            Log::Write(L"[trambot] province_tram VM reached via lua_pcall fallback");
-    }
-    if(ready)
         RunDirectBootstrap(lua);
-    const int result = g_luaPCall(lua, argumentCount, resultCount, errorFunction);
-    if(tramCandidate)
-    {
-        if(!result)
-        {
-            TryStartTramBot(lua);
-        }
-        else
-        {
-            g_tramResourceSeen.store(false, std::memory_order_release);
-            Log::Write(L"[trambot] province_tram pcall failed; startup skipped ("
-                + std::to_wstring(result) + L")");
-        }
     }
+    const int result = g_luaPCall(lua, argumentCount, resultCount, errorFunction);
+    if(ready && !result)
+        TryStartTramBot();
     return result;
 }
 
@@ -1938,6 +1909,63 @@ bool InstallHook(void* target, void* detour, void** original)
     MH_RemoveHook(target);
     *original = nullptr;
     return false;
+}
+
+bool ReadHookPatch(void* target, std::array<unsigned char, 8>& patch)
+{
+    if(!target)
+        return false;
+    MEMORY_BASIC_INFORMATION info{};
+    if(!VirtualQuery(target, &info, sizeof(info)) || info.State != MEM_COMMIT
+        || (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
+        return false;
+    __try
+    {
+        std::memcpy(patch.data(), target, patch.size());
+        return true;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
+}
+
+std::array<void*, 4> HookTargets()
+{
+    return {g_callHookTarget, g_isNameAllowedTarget, g_luaPCallTarget,
+        g_triggerServerEventTarget};
+}
+
+void CaptureHookPatches()
+{
+    const auto targets = HookTargets();
+    for(std::size_t index = 0; index < targets.size(); ++index)
+        g_hookPatchValid[index] = ReadHookPatch(targets[index], g_hookPatches[index]);
+}
+
+bool RepairHooks()
+{
+    const auto targets = HookTargets();
+    for(std::size_t index = 0; index < targets.size(); ++index)
+    {
+        std::array<unsigned char, 8> current{};
+        if(g_hookPatchValid[index] && ReadHookPatch(targets[index], current)
+            && current == g_hookPatches[index])
+        {
+            continue;
+        }
+        const MH_STATUS disabled = MH_DisableHook(targets[index]);
+        if(disabled != MH_OK && disabled != MH_ERROR_DISABLED)
+            return false;
+        const MH_STATUS enabled = MH_EnableHook(targets[index]);
+        if(enabled != MH_OK && enabled != MH_ERROR_ENABLED)
+            return false;
+        if(!ReadHookPatch(targets[index], g_hookPatches[index]))
+            return false;
+        g_hookPatchValid[index] = true;
+        Log::Write(L"[lua-bridge] restored overwritten signature hook");
+    }
+    return true;
 }
 
 void RemoveHooks()
@@ -1966,6 +1994,9 @@ void RemoveHooks()
     g_isNameAllowedTarget = nullptr;
     g_callHookTarget = nullptr;
     g_triggerServerEventTarget = nullptr;
+    g_clientModule = nullptr;
+    g_hookPatches = {};
+    g_hookPatchValid = {};
     g_luaPCall = nullptr;
     g_luaGetField = nullptr;
     g_luaSetTop = nullptr;
@@ -1979,6 +2010,7 @@ void RemoveHooks()
     g_addEvent = nullptr;
     g_addEventHandler = nullptr;
     g_removeEventHandler = nullptr;
+    g_loadString = nullptr;
     g_getVirtualMachine = nullptr;
     g_luaManagerSlot = nullptr;
     g_clientGameSlot = nullptr;
@@ -1999,14 +2031,10 @@ void RemoveHooks()
     g_bootstrapLua.store(nullptr, std::memory_order_release);
     g_bootstrapMain.store(nullptr, std::memory_order_release);
     g_reconnectCheckTick.store(0, std::memory_order_release);
-    g_tramBootstrapState.store(0, std::memory_order_release);
+    g_tramState.store(0, std::memory_order_release);
+    g_tramSession.store(0, std::memory_order_release);
     g_tramRetryTick.store(0, std::memory_order_release);
-    g_tramResourceSeen.store(false, std::memory_order_release);
-    g_tramResourceThread.store(0, std::memory_order_release);
-    g_tramFallbackLogged.store(false, std::memory_order_release);
     g_tramUiReadyLogged.store(false, std::memory_order_release);
-    g_tramOwner = nullptr;
-    g_tramMain = nullptr;
     g_sessions.clear();
     {
         std::scoped_lock lock(g_catcherMutex);
@@ -2014,6 +2042,7 @@ void RemoveHooks()
     }
     GuiClearLuaThreads();
     GuiResetTramState();
+    g_ready.store(false, std::memory_order_release);
 }
 
 std::uintptr_t Find(const SignatureScanner& scanner, std::string_view pattern,
@@ -2075,30 +2104,19 @@ bool PlayTramAlertSignal()
         SND_MEMORY | SND_ASYNC | SND_NODEFAULT) != FALSE;
 }
 
-void NotifyTramResourceScriptSeen(std::string_view path)
-{
-    g_tramResourceThread.store(GetCurrentThreadId(), std::memory_order_release);
-    g_tramRetryTick.store(0, std::memory_order_release);
-    if(!g_tramResourceSeen.exchange(true, std::memory_order_acq_rel))
-    {
-        Log::Write(L"[trambot] province_tram relay armed: "
-            + WideAscii(std::string(path)));
-    }
-}
-
 bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory)
 {
-    if(g_ready.load(std::memory_order_acquire))
-        return true;
+    if(!client)
+        return false;
     std::scoped_lock lock(g_installMutex);
     if(g_ready.load(std::memory_order_relaxed))
-        return true;
+    {
+        if(g_clientModule == client)
+            return RepairHooks();
+        RemoveHooks();
+    }
 
-    g_tramScriptPath = loaderDirectory.empty() ? std::wstring{}
-        : std::wstring(loaderDirectory) + L"\\TramBot.lua";
-    Log::Write(g_tramScriptPath.empty()
-        ? L"[trambot] external script path unavailable"
-        : L"[trambot] external script configured: " + g_tramScriptPath);
+    BuildBootstrapPayload(loaderDirectory);
 
     const SignatureScanner scanner(client);
     const std::uintptr_t isNameAllowed = Find(scanner, IsNameAllowedPattern,
@@ -2200,7 +2218,7 @@ bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory)
     g_luaPCallTarget = reinterpret_cast<void*>(luaPCall);
     for(DWORD waited = 0; waited <= 5000
         && (!g_triggerServerEventTarget || !g_triggerEvent || !g_addEvent
-            || !g_addEventHandler || !g_removeEventHandler);
+            || !g_addEventHandler || !g_removeEventHandler || !g_loadString);
         waited += 10)
     {
         if(!g_triggerServerEventTarget)
@@ -2223,8 +2241,11 @@ bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory)
             g_removeEventHandler = FindRegisteredLuaFunction(getLuaFunction,
                 "removeEventHandler");
         }
+        if(!g_loadString)
+            g_loadString = FindRegisteredLuaFunction(getLuaFunction, "loadstring");
         if((!g_triggerServerEventTarget || !g_triggerEvent || !g_addEvent
-            || !g_addEventHandler || !g_removeEventHandler) && waited != 5000)
+            || !g_addEventHandler || !g_removeEventHandler || !g_loadString)
+            && waited != 5000)
         {
             Sleep(10);
         }
@@ -2244,8 +2265,11 @@ bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory)
     Log::Scan(L"CLuaFunctionDefs::RemoveEventHandler",
         g_removeEventHandler ? L"resolved" : L"not_found",
         reinterpret_cast<std::uintptr_t>(g_removeEventHandler));
+    Log::Scan(L"native Lua compiler wrapper",
+        g_loadString ? L"resolved" : L"not_found",
+        reinterpret_cast<std::uintptr_t>(g_loadString));
     if(!g_triggerServerEventTarget || !g_triggerEvent || !g_addEvent
-        || !g_addEventHandler || !g_removeEventHandler)
+        || !g_addEventHandler || !g_removeEventHandler || !g_loadString)
     {
         Log::Write(L"[lua-bridge] direct alias registry lookup failed");
         return false;
@@ -2274,16 +2298,31 @@ bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory)
     g_bootstrapLua.store(nullptr, std::memory_order_release);
     g_bootstrapMain.store(nullptr, std::memory_order_release);
     g_reconnectCheckTick.store(0, std::memory_order_release);
-    g_tramBootstrapState.store(0, std::memory_order_release);
+    g_tramState.store(0, std::memory_order_release);
+    g_tramSession.store(0, std::memory_order_release);
     g_tramRetryTick.store(0, std::memory_order_release);
-    g_tramResourceSeen.store(false, std::memory_order_release);
-    g_tramResourceThread.store(0, std::memory_order_release);
-    g_tramFallbackLogged.store(false, std::memory_order_release);
     g_tramUiReadyLogged.store(false, std::memory_order_release);
-    g_tramOwner = nullptr;
-    g_tramMain = nullptr;
     GuiResetTramState();
+    g_clientModule = client;
+    CaptureHookPatches();
     g_ready.store(true, std::memory_order_release);
     Log::Write(L"[lua-bridge] targeted packet context, native monitor, and Lua bridge ready");
     return true;
+}
+
+bool RepairLuaBridgeHooks(HMODULE client)
+{
+    std::scoped_lock lock(g_installMutex);
+    return client && g_ready.load(std::memory_order_acquire)
+        && g_clientModule == client && RepairHooks();
+}
+
+void ResetLuaBridgeHooks(HMODULE client)
+{
+    std::scoped_lock lock(g_installMutex);
+    if(g_ready.load(std::memory_order_acquire)
+        && (!client || client == g_clientModule))
+    {
+        RemoveHooks();
+    }
 }

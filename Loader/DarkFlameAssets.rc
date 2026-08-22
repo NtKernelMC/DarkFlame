@@ -1,0 +1,4 @@
+#include "loader_resources.h"
+
+IDR_DARK_FLAME_BACKGROUND RCDATA "..\\Client\\assets\\background.png"
+IDR_DARK_FLAME_BANNER RCDATA "..\\Client\\assets\\banner.png"

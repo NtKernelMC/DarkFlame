@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <random>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -21,15 +22,80 @@
 namespace
 {
     using SendPacket = bool(__thiscall*)(void*, unsigned char, void*, int, int, int);
+    using RakPeerSend = char(__thiscall*)(void*, void*, int, int, char, int,
+        short, char);
     using GetElement = void*(__cdecl*)(unsigned int);
+    using DiskDriveSerial = bool(__cdecl*)(const char*, const char*, int);
 
     SRWLOCK g_installLock = SRWLOCK_INIT;
     SRWLOCK g_clientApiLock = SRWLOCK_INIT;
     SRWLOCK g_contextLock = SRWLOCK_INIT;
     SendPacket g_sendPacket{};
+    RakPeerSend g_rakPeerSend{};
     GetElement g_getElement{};
+    DiskDriveSerial g_diskDriveSerial{};
+    HMODULE g_netcModule{};
+    HMODULE g_clientApiModule{};
     bool g_installed{};
+    bool g_serialInstalled{};
+    bool g_randomSerialInstalled{};
+    bool g_randomSerialUnavailable{};
+    std::atomic_bool g_setSerial{};
+    std::atomic_bool g_randomSerial{};
+    std::atomic_bool g_randomSerialSpent{};
+    std::atomic_bool g_serialLogged{};
+    std::array<unsigned char, 32> g_publicSerialEncoded{};
+    std::array<char, 33> g_publicSerial{};
+    std::array<char, 64> g_randomDriveSerial{};
+    std::array<char, 64> g_randomDriveModel{};
     std::atomic_uint g_decodeFailures{};
+
+    std::mt19937 RandomEngine()
+    {
+        std::random_device device;
+        LARGE_INTEGER counter{};
+        QueryPerformanceCounter(&counter);
+        std::seed_seq seed{static_cast<unsigned int>(device()),
+            static_cast<unsigned int>(device()),
+            static_cast<unsigned int>(GetCurrentProcessId()),
+            static_cast<unsigned int>(GetCurrentThreadId()),
+            static_cast<unsigned int>(GetTickCount()),
+            static_cast<unsigned int>(counter.LowPart),
+            static_cast<unsigned int>(counter.HighPart)};
+        return std::mt19937(seed);
+    }
+
+    void GenerateRandomDrive()
+    {
+        auto engine = RandomEngine();
+        std::uniform_int_distribution<int> letter(0, 25);
+        std::uniform_int_distribution<int> digit(0, 9);
+        std::uniform_int_distribution<int> maker(0, 4);
+        constexpr std::string_view manufacturers[] = {
+            "KINGSTON", "SAMSUNG", "WD", "SEAGATE", "TOSHIBA"};
+        char* serial = g_randomDriveSerial.data();
+        *serial++ = static_cast<char>('A' + letter(engine));
+        *serial++ = static_cast<char>('A' + letter(engine));
+        for(int index{}; index < 12; ++index)
+            *serial++ = static_cast<char>('0' + digit(engine));
+        *serial++ = static_cast<char>('A' + letter(engine));
+        *serial++ = static_cast<char>('A' + letter(engine));
+        *serial = '\0';
+
+        char code[14]{};
+        int position{};
+        code[position++] = static_cast<char>('A' + letter(engine));
+        code[position++] = static_cast<char>('A' + letter(engine));
+        for(int index{}; index < 3; ++index)
+            code[position++] = static_cast<char>('0' + digit(engine));
+        code[position++] = static_cast<char>('A' + letter(engine));
+        for(int index{}; index < 5; ++index)
+            code[position++] = static_cast<char>('0' + digit(engine));
+        code[position++] = 'G';
+        code[position++] = 'B';
+        std::snprintf(g_randomDriveModel.data(), g_randomDriveModel.size(),
+            "%s %s", manufacturers[maker(engine)].data(), code);
+    }
 
     struct LuaContext
     {
@@ -76,6 +142,30 @@ namespace
             if(end <= cursor)
                 return false;
             cursor = (std::min)(end, finish);
+        }
+        return true;
+    }
+
+    bool Writable(const void* pointer, std::size_t size)
+    {
+        if(!Readable(pointer, size))
+            return false;
+        std::uintptr_t cursor = reinterpret_cast<std::uintptr_t>(pointer);
+        const std::uintptr_t finish = cursor + size;
+        while(cursor < finish)
+        {
+            MEMORY_BASIC_INFORMATION info{};
+            if(!VirtualQuery(reinterpret_cast<const void*>(cursor), &info,
+                sizeof(info)))
+                return false;
+            const DWORD protection = info.Protect & 0xFF;
+            if(protection != PAGE_READWRITE && protection != PAGE_WRITECOPY
+                && protection != PAGE_EXECUTE_READWRITE
+                && protection != PAGE_EXECUTE_WRITECOPY)
+                return false;
+            const std::uintptr_t end = reinterpret_cast<std::uintptr_t>(
+                info.BaseAddress) + static_cast<std::uintptr_t>(info.RegionSize);
+            cursor = (std::min)(finish, end);
         }
         return true;
     }
@@ -473,20 +563,169 @@ namespace
         return blocked || g_sendPacket(self, packetId, bitStream,
             priority, reliability, ordering);
     }
+
+    struct RakBitStreamView
+    {
+        std::uint32_t bitsUsed;
+        std::uint32_t bitsAllocated;
+        std::uint32_t readOffset;
+        unsigned char* data;
+    };
+
+    bool ApplyPublicSerial(void* bitStream)
+    {
+        if(!g_setSerial.load(std::memory_order_acquire)
+            || !Readable(bitStream, sizeof(RakBitStreamView)))
+            return false;
+        RakBitStreamView stream{};
+        std::memcpy(&stream, bitStream, sizeof(stream));
+        if(!stream.data || stream.bitsUsed > stream.bitsAllocated)
+            return false;
+        const std::size_t bytes = (static_cast<std::size_t>(stream.bitsUsed) + 7) >> 3;
+        if(bytes < 35 || bytes > 4 * 1024 * 1024 || !Readable(stream.data, bytes))
+            return false;
+        constexpr unsigned int RakPacketBase = 99;
+        constexpr unsigned int PlayerJoinData = 4;
+        constexpr unsigned int Reserved13JoinData = 16;
+        const unsigned int raw = stream.data[0];
+        if(raw != RakPacketBase + PlayerJoinData
+            && raw != RakPacketBase + Reserved13JoinData)
+            return false;
+        if(!Writable(stream.data + 3, g_publicSerialEncoded.size()))
+            return false;
+        std::memcpy(stream.data + 3, g_publicSerialEncoded.data(),
+            g_publicSerialEncoded.size());
+        if(!g_serialLogged.exchange(true, std::memory_order_acq_rel))
+        {
+            const std::string value(g_publicSerial.data());
+            Log::Write(L"[serial] public serial substituted => "
+                + std::wstring(value.begin(), value.end()));
+        }
+        return true;
+    }
+
+    char __fastcall HookRakPeerSend(void* self, void*, void* bitStream,
+        int priority, int reliability, char orderingChannel, int targetIp,
+        short targetPort, char broadcast)
+    {
+        ApplyPublicSerial(bitStream);
+        return g_rakPeerSend(self, bitStream, priority, reliability,
+            orderingChannel, targetIp, targetPort, broadcast);
+    }
+
+    bool __cdecl HookDiskDriveSerial(const char*, const char*, int flags)
+    {
+        const bool result = g_diskDriveSerial(g_randomDriveSerial.data(),
+            g_randomDriveModel.data(), flags);
+        if(!g_randomSerialSpent.exchange(true, std::memory_order_acq_rel))
+        {
+            const std::string text = "[serial] random disk identity used once: "
+                + std::string(g_randomDriveSerial.data()) + " / "
+                + std::string(g_randomDriveModel.data());
+            Log::Write(std::wstring(text.begin(), text.end()));
+        }
+        return result;
+    }
+
+    std::array<HookUtils::Hook, 11>& Hooks()
+    {
+        static std::array hooks{
+            HookUtils::Hook{L"AC__IsVpnEnabled", NetcSignatures::VpnBypass,
+                reinterpret_cast<void*>(&HookVpnBypass)},
+            HookUtils::Hook{L"AC__IsNetworkConnected", NetcSignatures::IsNetworkConnected,
+                reinterpret_cast<void*>(&HookIsNetworkConnected)},
+            HookUtils::Hook{L"AC__IsNotViolationCode", NetcSignatures::IsNotViolationCode,
+                reinterpret_cast<void*>(&HookIsNotViolationCode)},
+            HookUtils::Hook{L"AC_ExecuteSecurityViolationKick",
+                NetcSignatures::ExecuteSecurityViolationKick,
+                reinterpret_cast<void*>(&HookExecuteSecurityViolationKick)},
+            HookUtils::Hook{L"AC__SendClientKick", NetcSignatures::SendClientKick,
+                reinterpret_cast<void*>(&HookSendClientKick)},
+            HookUtils::Hook{L"AC__SendLoggerToServerMtaDev", NetcSignatures::SendLogger,
+                reinterpret_cast<void*>(&HookSendLogger)},
+            HookUtils::Hook{L"AC_SetClientKick", NetcSignatures::SetClientKick,
+                reinterpret_cast<void*>(&HookSetClientKick)},
+            HookUtils::Hook{L"AC__VfB00_Z00Scanner", NetcSignatures::VfB00Z00Scanner,
+                reinterpret_cast<void*>(&HookVfB00Z00Scanner)},
+            HookUtils::Hook{L"AC__SetClientKickNew", NetcSignatures::SetClientKickNew,
+                reinterpret_cast<void*>(&HookSetClientKickNew)},
+            HookUtils::Hook{L"AC_HandleSelfFileIntegrityResultPacket",
+                NetcSignatures::ScanModuleIntegrity,
+                reinterpret_cast<void*>(&HookScanModuleIntegrity)},
+            HookUtils::Hook{L"CNet__SendPacket", NetcSignatures::SendPacket,
+                reinterpret_cast<void*>(&HookSendPacket),
+                reinterpret_cast<void**>(&g_sendPacket)}
+        };
+        return hooks;
+    }
+
+    std::array<HookUtils::Hook, 1>& SerialHooks()
+    {
+        static std::array hooks{
+            HookUtils::Hook{L"RakPeer_SendBitStreamOrBuffer",
+                NetcSignatures::RakPeerSendBitStreamOrBuffer,
+                reinterpret_cast<void*>(&HookRakPeerSend),
+                reinterpret_cast<void**>(&g_rakPeerSend)}
+        };
+        return hooks;
+    }
+
+    std::array<HookUtils::Hook, 1>& RandomSerialHooks()
+    {
+        static std::array hooks{
+            HookUtils::Hook{L"DiskDriveSerial", NetcSignatures::DiskDriveSerial,
+                reinterpret_cast<void*>(&HookDiskDriveSerial),
+                reinterpret_cast<void**>(&g_diskDriveSerial)}
+        };
+        return hooks;
+    }
+}
+
+bool ConfigureNetcHooks(bool setSerial, bool randomSerial,
+    std::string_view publicSerial)
+{
+    if(setSerial && randomSerial)
+        return false;
+    g_randomSerial.store(randomSerial, std::memory_order_release);
+    g_randomSerialSpent.store(false, std::memory_order_release);
+    if(randomSerial)
+        GenerateRandomDrive();
+    if(!setSerial)
+    {
+        g_setSerial.store(false, std::memory_order_release);
+        g_serialLogged.store(false, std::memory_order_release);
+        return true;
+    }
+    if(publicSerial.size() != g_publicSerialEncoded.size())
+        return false;
+    for(std::size_t index{}; index < publicSerial.size(); ++index)
+    {
+        const unsigned char ch = static_cast<unsigned char>(publicSerial[index]);
+        if(!((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z')))
+            return false;
+        g_publicSerial[index] = static_cast<char>(ch);
+        g_publicSerialEncoded[index] = static_cast<unsigned char>(ch ^ index
+            ^ 0xD1 ^ (1u << (index & 7)));
+    }
+    g_publicSerial.back() = '\0';
+    g_serialLogged.store(false, std::memory_order_release);
+    g_setSerial.store(true, std::memory_order_release);
+    return true;
 }
 
 bool InitializeNetcClientApi(HMODULE client)
 {
-    if(g_getElement)
+    if(g_getElement && g_clientApiModule == client)
         return true;
     AcquireSRWLockExclusive(&g_clientApiLock);
-    if(g_getElement)
+    if(g_getElement && g_clientApiModule == client)
     {
         ReleaseSRWLockExclusive(&g_clientApiLock);
         return true;
     }
     const std::uintptr_t address = SignatureScanner(client).Find(GetElementPattern);
     g_getElement = reinterpret_cast<GetElement>(address);
+    g_clientApiModule = address ? client : nullptr;
     Log::Scan(L"CElementIDs::GetElement", address ? L"found" : L"not_found",
         address);
     ReleaseSRWLockExclusive(&g_clientApiLock);
@@ -538,8 +777,39 @@ bool InstallNetcHooks(HMODULE netc)
     AcquireSRWLockExclusive(&g_installLock);
     if (g_installed)
     {
-        ReleaseSRWLockExclusive(&g_installLock);
-        return true;
+        if(g_netcModule == netc)
+        {
+            if(g_randomSerialSpent.load(std::memory_order_acquire)
+                && g_randomSerialInstalled)
+            {
+                HookUtils::Remove(RandomSerialHooks());
+                g_randomSerialInstalled = false;
+                Log::Write(L"[serial] one-shot disk identity hook removed");
+            }
+            const bool coreReady = HookUtils::Repair(Hooks());
+            const bool serialReady = !g_setSerial.load(std::memory_order_acquire)
+                || (g_serialInstalled && HookUtils::Repair(SerialHooks()));
+            const bool randomReady = !g_randomSerial.load(std::memory_order_acquire)
+                || g_randomSerialSpent.load(std::memory_order_acquire)
+                || g_randomSerialUnavailable
+                || (g_randomSerialInstalled && HookUtils::Repair(RandomSerialHooks()));
+            if(coreReady && serialReady && randomReady)
+            {
+                ReleaseSRWLockExclusive(&g_installLock);
+                return true;
+            }
+        }
+        HookUtils::Remove(Hooks());
+        HookUtils::Remove(SerialHooks());
+        HookUtils::Remove(RandomSerialHooks());
+        g_installed = false;
+        g_serialInstalled = false;
+        g_randomSerialInstalled = false;
+        g_randomSerialUnavailable = false;
+        g_netcModule = nullptr;
+        g_sendPacket = nullptr;
+        g_rakPeerSend = nullptr;
+        g_diskDriveSerial = nullptr;
     }
     if (!netc)
     {
@@ -548,33 +818,68 @@ bool InstallNetcHooks(HMODULE netc)
     }
 
     const SignatureScanner scanner(netc);
-    std::array hooks{
-        HookUtils::Hook{L"AC__IsVpnEnabled", NetcSignatures::VpnBypass,
-            reinterpret_cast<void*>(&HookVpnBypass)},
-        HookUtils::Hook{L"AC__IsNetworkConnected", NetcSignatures::IsNetworkConnected,
-            reinterpret_cast<void*>(&HookIsNetworkConnected)},
-        HookUtils::Hook{L"AC__IsNotViolationCode", NetcSignatures::IsNotViolationCode,
-            reinterpret_cast<void*>(&HookIsNotViolationCode)},
-        HookUtils::Hook{L"AC_ExecuteSecurityViolationKick", NetcSignatures::ExecuteSecurityViolationKick,
-            reinterpret_cast<void*>(&HookExecuteSecurityViolationKick)},
-        HookUtils::Hook{L"AC__SendClientKick", NetcSignatures::SendClientKick,
-            reinterpret_cast<void*>(&HookSendClientKick)},
-        HookUtils::Hook{L"AC__SendLoggerToServerMtaDev", NetcSignatures::SendLogger,
-            reinterpret_cast<void*>(&HookSendLogger)},
-        HookUtils::Hook{L"AC_SetClientKick", NetcSignatures::SetClientKick,
-            reinterpret_cast<void*>(&HookSetClientKick)},
-        HookUtils::Hook{L"AC__VfB00_Z00Scanner", NetcSignatures::VfB00Z00Scanner,
-            reinterpret_cast<void*>(&HookVfB00Z00Scanner)},
-        HookUtils::Hook{L"AC__SetClientKickNew", NetcSignatures::SetClientKickNew,
-            reinterpret_cast<void*>(&HookSetClientKickNew)},
-        HookUtils::Hook{L"AC_HandleSelfFileIntegrityResultPacket", NetcSignatures::ScanModuleIntegrity,
-            reinterpret_cast<void*>(&HookScanModuleIntegrity)},
-        HookUtils::Hook{L"CNet__SendPacket", NetcSignatures::SendPacket,
-            reinterpret_cast<void*>(&HookSendPacket), reinterpret_cast<void**>(&g_sendPacket)}
-    };
-    g_installed = HookUtils::Install(scanner, hooks);
+    g_serialInstalled = false;
+    g_randomSerialUnavailable = false;
+    g_installed = HookUtils::Install(scanner, Hooks());
+    if(g_installed && g_setSerial.load(std::memory_order_acquire))
+    {
+        g_serialInstalled = HookUtils::Install(scanner, SerialHooks());
+        if(!g_serialInstalled)
+        {
+            HookUtils::Remove(SerialHooks());
+            HookUtils::Remove(Hooks());
+            g_installed = false;
+        }
+    }
+    if(g_installed && g_randomSerial.load(std::memory_order_acquire)
+        && !g_randomSerialSpent.load(std::memory_order_acquire))
+    {
+        g_randomSerialInstalled = HookUtils::Install(scanner, RandomSerialHooks());
+        if(!g_randomSerialInstalled)
+        {
+            g_randomSerialUnavailable = true;
+            Log::Write(L"[serial] random disk identity hook unavailable");
+        }
+    }
     if (!g_installed)
+    {
         g_sendPacket = nullptr;
+        g_rakPeerSend = nullptr;
+        g_diskDriveSerial = nullptr;
+    }
+    else
+        g_netcModule = netc;
     ReleaseSRWLockExclusive(&g_installLock);
     return g_installed;
+}
+
+void ResetNetcHooks(HMODULE netc)
+{
+    AcquireSRWLockExclusive(&g_installLock);
+    if(g_installed && (!netc || netc == g_netcModule))
+    {
+        HookUtils::Remove(Hooks());
+        HookUtils::Remove(SerialHooks());
+        HookUtils::Remove(RandomSerialHooks());
+        g_installed = false;
+        g_serialInstalled = false;
+        g_randomSerialInstalled = false;
+        g_randomSerialUnavailable = false;
+        g_netcModule = nullptr;
+        g_sendPacket = nullptr;
+        g_rakPeerSend = nullptr;
+        g_diskDriveSerial = nullptr;
+    }
+    ReleaseSRWLockExclusive(&g_installLock);
+}
+
+void ResetNetcClientApi(HMODULE client)
+{
+    AcquireSRWLockExclusive(&g_clientApiLock);
+    if(!client || client == g_clientApiModule)
+    {
+        g_getElement = nullptr;
+        g_clientApiModule = nullptr;
+    }
+    ReleaseSRWLockExclusive(&g_clientApiLock);
 }

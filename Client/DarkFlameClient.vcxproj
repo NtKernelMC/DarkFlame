@@ -52,7 +52,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <ProgramDatabaseFile>$(OutDir)$(TargetName).pdb</ProgramDatabaseFile>
-      <AdditionalDependencies>Advapi32.lib;OleAut32.lib;Dbghelp.lib;d3d9.lib;windowscodecs.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Advapi32.lib;Iphlpapi.lib;Wbemuuid.lib;OleAut32.lib;Dbghelp.lib;d3d9.lib;windowscodecs.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -64,6 +64,7 @@
     <ClCompile Include="lua_bridge.cpp" />
     <ClCompile Include="memory_module_dumper.cpp" />
     <ClCompile Include="netc_hooks.cpp" />
+    <ClCompile Include="privacy_hooks.cpp" />
     <ClCompile Include="signature_scanner.cpp" />
     <ClCompile Include="text_display_hook.cpp" />
     <ClCompile Include="third_party\imgui\imgui.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
@@ -89,6 +90,7 @@
     <ClInclude Include="memory_module_dumper.h" />
     <ClInclude Include="netc_hooks.h" />
     <ClInclude Include="netc_signatures.h" />
+    <ClInclude Include="privacy_hooks.h" />
     <ClInclude Include="signature_scanner.h" />
     <ClInclude Include="text_display_hook.h" />
     <ClInclude Include="netc_bitstream.h" />

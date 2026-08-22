@@ -5,5 +5,6 @@
 #include <string_view>
 
 bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory);
+bool RepairLuaBridgeHooks(HMODULE client);
+void ResetLuaBridgeHooks(HMODULE client);
 bool PlayTramAlertSignal();
-void NotifyTramResourceScriptSeen(std::string_view path);

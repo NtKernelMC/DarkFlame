@@ -51,6 +51,7 @@ bin/Release/*
 !bin/Release/x86/
 bin/Release/x86/*
 !bin/Release/x86/*.lua
+!bin/Release/x86/DarkFlame.cfg
 obj/
 .vs/
 

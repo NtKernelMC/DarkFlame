@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config.h"
 #include "../Shared/bootstrap_protocol.h"
 
 #include <Windows.h>
@@ -10,7 +11,7 @@ class BootstrapIpc
 {
 public:
     BootstrapIpc(const std::wstring& logDirectory, const std::wstring& agentPath,
-        const std::wstring& clientPath)
+        const std::wstring& clientPath, const DarkFlameConfig& config)
     {
         const std::wstring suffix = std::to_wstring(GetCurrentProcessId())
             + L"-" + std::to_wstring(GetTickCount64());
@@ -29,11 +30,20 @@ public:
             m_error = GetLastError();
             return;
         }
+        const std::wstring publicSerial(config.publicSerial.begin(), config.publicSerial.end());
         if (!SetEnvironmentVariableW(BootstrapProtocol::LogDirectoryVariable, logDirectory.c_str())
             || !SetEnvironmentVariableW(BootstrapProtocol::AgentPathVariable, agentPath.c_str())
             || !SetEnvironmentVariableW(BootstrapProtocol::ClientPathVariable, clientPath.c_str())
             || !SetEnvironmentVariableW(BootstrapProtocol::AgentReadyEventVariable, readyName.c_str())
-            || !SetEnvironmentVariableW(BootstrapProtocol::ClientLoadedEventVariable, loadedName.c_str()))
+            || !SetEnvironmentVariableW(BootstrapProtocol::ClientLoadedEventVariable, loadedName.c_str())
+            || !SetEnvironmentVariableW(BootstrapProtocol::AntiShadowVariable,
+                config.antiShadow ? L"1" : L"0")
+            || !SetEnvironmentVariableW(BootstrapProtocol::SetSerialVariable,
+                config.setSerial ? L"1" : L"0")
+            || !SetEnvironmentVariableW(BootstrapProtocol::RandomSerialVariable,
+                config.randomSerial ? L"1" : L"0")
+            || !SetEnvironmentVariableW(BootstrapProtocol::PublicSerialVariable,
+                publicSerial.c_str()))
         {
             m_error = GetLastError();
             return;
@@ -64,6 +74,10 @@ public:
         SetEnvironmentVariableW(BootstrapProtocol::ClientPathVariable, nullptr);
         SetEnvironmentVariableW(BootstrapProtocol::AgentReadyEventVariable, nullptr);
         SetEnvironmentVariableW(BootstrapProtocol::ClientLoadedEventVariable, nullptr);
+        SetEnvironmentVariableW(BootstrapProtocol::AntiShadowVariable, nullptr);
+        SetEnvironmentVariableW(BootstrapProtocol::SetSerialVariable, nullptr);
+        SetEnvironmentVariableW(BootstrapProtocol::RandomSerialVariable, nullptr);
+        SetEnvironmentVariableW(BootstrapProtocol::PublicSerialVariable, nullptr);
     }
 
 private:
