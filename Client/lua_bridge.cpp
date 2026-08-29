@@ -9,6 +9,7 @@
 #include "lua_bridge_utils.h"
 #include "memory_utils.h"
 #include "netc_hooks.h"
+#include "resource.h"
 #include "signature_scanner.h"
 
 #include <MinHook.h>
@@ -18,7 +19,6 @@
 #include <array>
 #include <atomic>
 #include <charconv>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -68,14 +68,24 @@ std::atomic_uint32_t g_tramState{};
 std::atomic_uintptr_t g_tramSession{};
 std::atomic<DWORD> g_tramRetryTick{};
 std::atomic_bool g_tramUiReadyLogged{};
+std::atomic_uint32_t g_jbkState{};
+std::atomic_uintptr_t g_jbkSession{};
+std::atomic<DWORD> g_jbkRetryTick{};
+std::atomic_bool g_jbkUiReadyLogged{};
+std::atomic_bool g_alertMonitorEnabled{};
+std::array<std::atomic_bool, 256> g_postedKeys{};
+std::atomic_uint32_t g_keyEmulationLogs{};
+std::atomic<DWORD> g_unknownKeyLogTick{};
 HMODULE g_clientModule{};
 std::array<std::array<unsigned char, 8>, 3> g_hookPatches{};
 std::array<bool, 3> g_hookPatchValid{};
 std::mutex g_installMutex;
 std::wstring g_tramScriptPath;
+std::wstring g_jbkScriptPath;
 std::string g_bootstrapPayload;
 std::string g_bootstrapError;
 std::string g_tramPayload;
+std::string g_jbkPayload;
 void* g_isNameAllowedTarget{};
 void* g_callHookTarget{};
 void* g_triggerServerEventTarget{};
@@ -173,11 +183,17 @@ int __cdecl DirectRemoveEventHandler(void* lua);
 int __cdecl DirectAddDebugHook(void* lua);
 int __cdecl DirectRemoveDebugHook(void* lua);
 int __cdecl DirectEmulateKey(void* lua);
+int __cdecl DirectEmulateMouseButton(void* lua);
 int __cdecl DirectPlayAlertSignal(void* lua);
+int __cdecl DirectSetAlertMonitorEnabled(void* lua);
 int __cdecl DirectCatchServerEvent(void* lua);
 int __cdecl DirectRemoveEventCatcher(void* lua);
 int __cdecl DirectTramTakeCommand(void* lua);
 int __cdecl DirectTramUpdate(void* lua);
+int __cdecl DirectTramLog(void* lua);
+int __cdecl DirectJbkTakeCommand(void* lua);
+int __cdecl DirectJbkUpdate(void* lua);
+int PushDirectResult(void* lua, bool result);
 void DispatchEventCatchers(void* lua);
 
 void RegisterPrivate(void* lua, const char* name, LuaCFunction function)
@@ -315,6 +331,49 @@ int __cdecl DirectTramUpdate(void* lua)
     return 1;
 }
 
+int __cdecl DirectTramLog(void* lua)
+{
+    if(DarkFlameLuaGetTop(lua) < 1)
+        return PushDirectResult(lua, false);
+    const std::string text = LuaText(lua, 1, 8192, false);
+    if(text.empty())
+        return PushDirectResult(lua, false);
+    Log::Tram(text);
+    return PushDirectResult(lua, true);
+}
+
+int __cdecl DirectJbkTakeCommand(void* lua)
+{
+    std::string command;
+    if(!GuiTakeJbkCommand(command))
+        return 0;
+    DarkFlameLuaPushString(lua, command.c_str());
+    Log::Write(L"[jbkbot] Lua consumed GUI command: " + WideAscii(command));
+    return 1;
+}
+
+int __cdecl DirectJbkUpdate(void* lua)
+{
+    if(DarkFlameLuaGetTop(lua) < 2)
+    {
+        DarkFlameLuaPushBoolean(lua, 0);
+        return 1;
+    }
+    const std::string key = LuaText(lua, 1, 64, false);
+    const std::string value = LuaText(lua, 2, 512, false);
+    GuiUpdateJbkState(key, value);
+    if(key == "loaded")
+    {
+        const bool loaded = value == "1" || value == "true";
+        if(loaded && !g_jbkUiReadyLogged.exchange(true))
+            Log::Write(L"[jbkbot] Lua GUI bridge online");
+        else if(!loaded)
+            g_jbkUiReadyLogged.store(false, std::memory_order_release);
+    }
+    DarkFlameLuaPushBoolean(lua, 1);
+    return 1;
+}
+
 void RegisterDirectAliases(void* lua)
 {
     RegisterPrivate(lua, "dfTriggerServerEvent", &DirectTriggerServerEvent);
@@ -325,11 +384,16 @@ void RegisterDirectAliases(void* lua)
     RegisterPrivate(lua, "dfAddDebugHook", &DirectAddDebugHook);
     RegisterPrivate(lua, "dfRemoveDebugHook", &DirectRemoveDebugHook);
     RegisterPrivate(lua, "dfEmulateKey", &DirectEmulateKey);
+    RegisterPrivate(lua, "dfEmulateMouseButton", &DirectEmulateMouseButton);
     RegisterPrivate(lua, "dfPlayAlertSignal", &DirectPlayAlertSignal);
+    RegisterPrivate(lua, "dfSetAlertMonitorEnabled", &DirectSetAlertMonitorEnabled);
     RegisterPrivate(lua, "dfCatchServerEvent", &DirectCatchServerEvent);
     RegisterPrivate(lua, "dfRemoveEventCatcher", &DirectRemoveEventCatcher);
     RegisterPrivate(lua, "dfTramTakeCommand", &DirectTramTakeCommand);
     RegisterPrivate(lua, "dfTramUpdate", &DirectTramUpdate);
+    RegisterPrivate(lua, "dfTramLog", &DirectTramLog);
+    RegisterPrivate(lua, "dfJbkTakeCommand", &DirectJbkTakeCommand);
+    RegisterPrivate(lua, "dfJbkUpdate", &DirectJbkUpdate);
     RegisterPrivate(lua, "dfMenuOpen", &MenuOpen);
 }
 
@@ -666,16 +730,41 @@ int __cdecl DirectEmulateKey(void* lua)
 {
     const std::string key = LuaText(lua, 1, 32);
     const int virtualKey = VirtualKey(key);
+    if(!virtualKey)
+    {
+        const DWORD now = GetTickCount();
+        DWORD logged = g_unknownKeyLogTick.load(std::memory_order_relaxed);
+        if(now - logged >= 1000 && g_unknownKeyLogTick.compare_exchange_strong(
+            logged, now, std::memory_order_relaxed))
+        {
+            Log::Write(L"[input] dfEmulateKey rejected unknown key: " + WideAscii(key));
+        }
+        return PushDirectResult(lua, false);
+    }
+
+    const bool pressed = DarkFlameLuaToBoolean(lua, 2) != 0;
+    const bool directInput = GuiEmulateKey(virtualKey, pressed);
     HWND window = FindWindowA(nullptr, "MTA: Province");
     if(!window) window = FindWindowA(nullptr, "MTA: San Andreas");
     if(!window) window = ProcessWindow();
-    if(!virtualKey || !window)
-        return PushDirectResult(lua, false);
+    if(window)
+    {
+        DWORD process{};
+        GetWindowThreadProcessId(window, &process);
+        if(process != GetCurrentProcessId())
+            window = ProcessWindow();
+        if(window)
+            window = GetAncestor(window, GA_ROOT);
+    }
 
-    const bool pressed = DarkFlameLuaToBoolean(lua, 2) != 0;
-    const UINT scan = MapVirtualKeyA(virtualKey, MAPVK_VK_TO_VSC);
-    LPARAM parameter = 1 | static_cast<LPARAM>(scan << 16);
-    const bool extended = virtualKey == VK_RMENU || virtualKey == VK_RCONTROL
+    const DWORD windowThread = window
+        ? GetWindowThreadProcessId(window, nullptr) : GetCurrentThreadId();
+    const HKL layout = GetKeyboardLayout(windowThread);
+    const UINT scan = MapVirtualKeyExW(static_cast<UINT>(virtualKey),
+        MAPVK_VK_TO_VSC_EX, layout);
+    LPARAM parameter = 1 | static_cast<LPARAM>((scan & 0xFF) << 16);
+    const bool extended = (scan & 0xFF00) == 0xE000
+        || virtualKey == VK_RMENU || virtualKey == VK_RCONTROL
         || virtualKey == VK_NUMLOCK || virtualKey == VK_INSERT
         || virtualKey == VK_DELETE || virtualKey == VK_HOME
         || virtualKey == VK_END || virtualKey == VK_PRIOR
@@ -684,18 +773,92 @@ int __cdecl DirectEmulateKey(void* lua)
         || virtualKey == VK_RIGHT || virtualKey == VK_DIVIDE;
     if(extended)
         parameter |= static_cast<LPARAM>(1u << 24);
+    g_postedKeys[virtualKey].store(pressed, std::memory_order_release);
     if(!pressed)
         parameter |= static_cast<LPARAM>((1u << 30) | (1u << 31));
     const UINT message = virtualKey == VK_LMENU
         ? (pressed ? WM_SYSKEYDOWN : WM_SYSKEYUP)
         : (pressed ? WM_KEYDOWN : WM_KEYUP);
-    return PushDirectResult(lua, PostMessageA(window, message, virtualKey,
-        parameter) != FALSE);
+    if(message == WM_SYSKEYDOWN || message == WM_SYSKEYUP)
+        parameter |= static_cast<LPARAM>(1u << 29);
+
+    bool posted{};
+    DWORD error = ERROR_INVALID_WINDOW_HANDLE;
+    if(window && IsWindow(window))
+    {
+        SetLastError(ERROR_SUCCESS);
+        posted = PostMessageW(window, message, virtualKey, parameter) != FALSE;
+        error = posted ? ERROR_SUCCESS : GetLastError();
+        if(!posted)
+        {
+            DWORD_PTR ignored{};
+            SetLastError(ERROR_SUCCESS);
+            posted = SendMessageTimeoutW(window, message, virtualKey, parameter,
+                SMTO_ABORTIFHUNG | SMTO_BLOCK, 50, &ignored) != 0;
+            error = posted ? ERROR_SUCCESS : GetLastError();
+        }
+    }
+
+    const std::uint32_t logged = g_keyEmulationLogs.fetch_add(1,
+        std::memory_order_relaxed);
+    if(!posted || logged < 24)
+    {
+        wchar_t line[320]{};
+        swprintf_s(line, L"[input] key=%hs %s post=%u dinput=%u minimized=%u "
+            L"hwnd=0x%p scan=0x%X error=%lu", key.c_str(),
+            pressed ? L"down" : L"up", posted ? 1u : 0u,
+            directInput ? 1u : 0u, window && IsIconic(window) ? 1u : 0u,
+            window, scan, static_cast<unsigned long>(error));
+        Log::Write(line);
+    }
+    return PushDirectResult(lua, posted || directInput);
+}
+
+int __cdecl DirectEmulateMouseButton(void* lua)
+{
+    const std::string button = LuaText(lua, 1, 16);
+    HWND window = FindWindowA(nullptr, "MTA: Province");
+    if(!window) window = FindWindowA(nullptr, "MTA: San Andreas");
+    if(!window) window = ProcessWindow();
+    if(!window)
+        return PushDirectResult(lua, false);
+
+    UINT down{};
+    UINT up{};
+    WPARAM state{};
+    if(button == "right" || button == "rmb")
+    {
+        down = WM_RBUTTONDOWN;
+        up = WM_RBUTTONUP;
+        state = MK_RBUTTON;
+    }
+    else if(button == "left" || button == "lmb")
+    {
+        down = WM_LBUTTONDOWN;
+        up = WM_LBUTTONUP;
+        state = MK_LBUTTON;
+    }
+    else
+        return PushDirectResult(lua, false);
+
+    POINT point{};
+    if(!GetCursorPos(&point) || !ScreenToClient(window, &point))
+        point = {};
+    const bool pressed = DarkFlameLuaToBoolean(lua, 2) != 0;
+    return PushDirectResult(lua, PostMessageA(window, pressed ? down : up,
+        pressed ? state : 0, MAKELPARAM(point.x, point.y)) != FALSE);
 }
 
 int __cdecl DirectPlayAlertSignal(void* lua)
 {
     return PushDirectResult(lua, PlayTramAlertSignal());
+}
+
+int __cdecl DirectSetAlertMonitorEnabled(void* lua)
+{
+    g_alertMonitorEnabled.store(DarkFlameLuaToBoolean(lua, 1) != 0,
+        std::memory_order_release);
+    return PushDirectResult(lua, true);
 }
 
 int DirectDebugHook(void* lua, bool add)
@@ -1034,20 +1197,21 @@ void DrainThreadRequests()
     }
 }
 
-bool ReadTramScript(std::string& code, std::string& error)
+bool ReadLuaScript(const std::wstring& path, std::string_view name,
+    std::string& code, std::string& error)
 {
     code.clear();
-    if(g_tramScriptPath.empty())
+    if(path.empty())
     {
         error = "DarkFlame directory is unavailable";
         return false;
     }
-    HANDLE file = CreateFileW(g_tramScriptPath.c_str(), GENERIC_READ,
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if(file == INVALID_HANDLE_VALUE)
     {
-        error = "TramBot.lua not found beside DarkFlame.exe";
+        error = std::string(name) + " not found beside DarkFlame.exe";
         return false;
     }
     LARGE_INTEGER size{};
@@ -1055,7 +1219,7 @@ bool ReadTramScript(std::string& code, std::string& error)
         || size.QuadPart > 4 * 1024 * 1024)
     {
         CloseHandle(file);
-        error = "TramBot.lua has an invalid size";
+        error = std::string(name) + " has an invalid size";
         return false;
     }
     code.resize(static_cast<std::size_t>(size.QuadPart));
@@ -1066,7 +1230,7 @@ bool ReadTramScript(std::string& code, std::string& error)
     if(!loaded)
     {
         code.clear();
-        error = "TramBot.lua read failed";
+        error = std::string(name) + " read failed";
         return false;
     }
     if(code.size() >= 3 && static_cast<unsigned char>(code[0]) == 0xEF
@@ -1078,7 +1242,7 @@ bool ReadTramScript(std::string& code, std::string& error)
     if(code.find('\0') != std::string::npos)
     {
         code.clear();
-        error = "TramBot.lua contains a zero byte";
+        error = std::string(name) + " contains a zero byte";
         return false;
     }
     return true;
@@ -1088,23 +1252,43 @@ void BuildBootstrapPayload(std::wstring_view loaderDirectory)
 {
     g_tramScriptPath = loaderDirectory.empty() ? std::wstring{}
         : std::wstring(loaderDirectory) + L"\\TramBot.lua";
+    g_jbkScriptPath = loaderDirectory.empty() ? std::wstring{}
+        : std::wstring(loaderDirectory) + L"\\JBKBot.lua";
     g_bootstrapPayload.assign(LuaBridgePayload::Bootstrap);
     g_tramPayload.clear();
+    g_jbkPayload.clear();
     std::string tram;
-    std::string error;
-    if (ReadTramScript(tram, error))
+    std::string tramError;
+    if(ReadLuaScript(g_tramScriptPath, "TramBot.lua", tram, tramError))
     {
         g_tramPayload = std::move(tram);
         Log::Write(L"[trambot] direct bootstrap core ready: "
             + std::to_wstring(g_bootstrapPayload.size())
             + L" bytes; TramBot staged: "
             + std::to_wstring(g_tramPayload.size()) + L" bytes");
-        return;
     }
-    GuiUpdateTramState("loaded", "0");
-    GuiUpdateTramState("status", error);
-    Log::Write(L"[trambot] direct bootstrap contains core only: "
-        + WideAscii(error));
+    else
+    {
+        GuiUpdateTramState("loaded", "0");
+        GuiUpdateTramState("status", tramError);
+        Log::Write(L"[trambot] direct bootstrap contains core only: "
+            + WideAscii(tramError));
+    }
+
+    std::string jbk;
+    std::string jbkError;
+    if(ReadLuaScript(g_jbkScriptPath, "JBKBot.lua", jbk, jbkError))
+    {
+        g_jbkPayload = std::move(jbk);
+        Log::Write(L"[jbkbot] staged beside TramBot: "
+            + std::to_wstring(g_jbkPayload.size()) + L" bytes");
+    }
+    else
+    {
+        GuiUpdateJbkState("loaded", "0");
+        GuiUpdateJbkState("status", jbkError);
+        Log::Write(L"[jbkbot] not staged: " + WideAscii(jbkError));
+    }
 }
 
 void RunDirectBootstrap()
@@ -1166,6 +1350,8 @@ void RunDirectBootstrap()
     g_bootstrapState.store(0, std::memory_order_release);
     GuiUpdateTramState("loaded", "0");
     GuiUpdateTramState("status", error);
+    GuiUpdateJbkState("loaded", "0");
+    GuiUpdateJbkState("status", error);
     if(error != g_bootstrapError)
     {
         g_bootstrapError = error;
@@ -1218,6 +1404,50 @@ void TryStartTramBot()
     }
 }
 
+void TryStartJbkBot()
+{
+    if(g_bootstrapState.load(std::memory_order_acquire) != 2
+        || g_jbkPayload.empty()
+        || g_jbkState.load(std::memory_order_acquire) == 2)
+    {
+        return;
+    }
+    const DWORD now = GetTickCount();
+    DWORD checked = g_jbkRetryTick.load(std::memory_order_relaxed);
+    if(now - checked < 500 || !g_jbkRetryTick.compare_exchange_strong(
+        checked, now, std::memory_order_relaxed))
+    {
+        return;
+    }
+    std::uint32_t expected{};
+    if(!g_jbkState.compare_exchange_strong(expected, 1,
+        std::memory_order_acq_rel, std::memory_order_acquire))
+    {
+        return;
+    }
+
+    std::uintptr_t id{};
+    std::string error;
+    if(InjectIntoResource("province_tram", g_jbkPayload, id, error))
+    {
+        g_jbkSession.store(id, std::memory_order_release);
+        g_jbkState.store(2, std::memory_order_release);
+        Log::Write(L"[jbkbot] runtime injection started in province_tram: "
+            + WideAscii(ThreadKey(id)));
+        return;
+    }
+
+    g_jbkState.store(0, std::memory_order_release);
+    GuiUpdateJbkState("loaded", "0");
+    GuiUpdateJbkState("status", error);
+    static std::string previousError;
+    if(error != previousError)
+    {
+        previousError = error;
+        Log::Write(L"[jbkbot] runtime injection pending: " + WideAscii(error));
+    }
+}
+
 void ResetForReconnect(bool immediate = false)
 {
     if(g_bootstrapState.load(std::memory_order_acquire) != 2)
@@ -1252,10 +1482,16 @@ void ResetForReconnect(bool immediate = false)
     g_tramSession.store(0, std::memory_order_release);
     g_tramRetryTick.store(0, std::memory_order_release);
     g_tramUiReadyLogged.store(false, std::memory_order_release);
+    g_jbkState.store(0, std::memory_order_release);
+    g_jbkSession.store(0, std::memory_order_release);
+    g_jbkRetryTick.store(0, std::memory_order_release);
+    g_jbkUiReadyLogged.store(false, std::memory_order_release);
+    g_alertMonitorEnabled.store(false, std::memory_order_release);
     g_sessions.clear();
     ClearEventCatchers(false);
     GuiClearLuaThreads();
     GuiResetTramState();
+    GuiResetJbkState();
     g_hideCalls.store(false, std::memory_order_release);
     g_scopeDepth.store(0, std::memory_order_release);
 }
@@ -1662,9 +1898,15 @@ void RemoveHooks()
     g_tramSession.store(0, std::memory_order_release);
     g_tramRetryTick.store(0, std::memory_order_release);
     g_tramUiReadyLogged.store(false, std::memory_order_release);
+    g_jbkState.store(0, std::memory_order_release);
+    g_jbkSession.store(0, std::memory_order_release);
+    g_jbkRetryTick.store(0, std::memory_order_release);
+    g_jbkUiReadyLogged.store(false, std::memory_order_release);
+    g_alertMonitorEnabled.store(false, std::memory_order_release);
     g_sessions.clear();
     GuiClearLuaThreads();
     GuiResetTramState();
+    GuiResetJbkState();
     g_ready.store(false, std::memory_order_release);
 }
 
@@ -1675,6 +1917,11 @@ std::uintptr_t Find(const SignatureScanner& scanner, std::string_view pattern,
     Log::Scan(name, address ? L"found" : L"not_found", address);
     return address;
 }
+}
+
+bool LuaAlertMonitorEnabled()
+{
+    return g_alertMonitorEnabled.load(std::memory_order_acquire);
 }
 
 void PulseLuaBridge()
@@ -1698,56 +1945,48 @@ void PulseLuaBridge()
     ResetForReconnect();
     RunDirectBootstrap();
     TryStartTramBot();
+    TryStartJbkBot();
 }
 
 bool PlayTramAlertSignal()
 {
-    static const std::vector<std::uint8_t> sound = []
-    {
-        constexpr std::uint32_t rate = 22050;
-        constexpr std::uint32_t samples = rate * 6 / 5;
-        constexpr double pi = 3.14159265358979323846;
-        std::vector<std::uint8_t> wave;
-        wave.reserve(44 + samples * 2);
-        const auto bytes = [&](std::uint32_t value, unsigned count)
-        {
-            for(unsigned index = 0; index < count; ++index)
-                wave.push_back(static_cast<std::uint8_t>(value >> (index * 8)));
-        };
-        wave.insert(wave.end(), {'R', 'I', 'F', 'F'});
-        bytes(36 + samples * 2, 4);
-        wave.insert(wave.end(), {'W', 'A', 'V', 'E', 'f', 'm', 't', ' '});
-        bytes(16, 4);
-        bytes(1, 2);
-        bytes(1, 2);
-        bytes(rate, 4);
-        bytes(rate * 2, 4);
-        bytes(2, 2);
-        bytes(16, 2);
-        wave.insert(wave.end(), {'d', 'a', 't', 'a'});
-        bytes(samples * 2, 4);
-        for(std::uint32_t index = 0; index < samples; ++index)
-        {
-            const double time = static_cast<double>(index) / rate;
-            const double phase = std::fmod(time, 0.15);
-            const unsigned pulse = static_cast<unsigned>(time / 0.15);
-            const double frequency = pulse % 2 ? 660.0 : 990.0;
-            const double edge = std::min({phase * 30.0,
-                (0.15 - phase) * 30.0, 1.0});
-            const auto sample = static_cast<std::int16_t>(std::sin(
-                2.0 * pi * frequency * time) * 15000.0 * edge);
-            bytes(static_cast<std::uint16_t>(sample), 2);
-        }
-        return wave;
-    }();
     HWND window = ProcessWindow();
     if(window)
     {
         FLASHWINFO flash{sizeof(flash), window, FLASHW_TRAY, 3, 0};
         FlashWindowEx(&flash);
     }
-    return PlaySoundA(reinterpret_cast<LPCSTR>(sound.data()), nullptr,
+    MEMORY_BASIC_INFORMATION memory{};
+    if(!VirtualQuery(reinterpret_cast<const void*>(&PlayTramAlertSignal),
+        &memory, sizeof(memory)) || !memory.AllocationBase)
+    {
+        Log::Write(L"[alert] VirtualQuery failed: " + std::to_wstring(GetLastError()));
+        return false;
+    }
+    const HMODULE module = static_cast<HMODULE>(memory.AllocationBase);
+    SetLastError(ERROR_SUCCESS);
+    HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(IDR_DARK_FLAME_ALERT), L"WAVE");
+    if(!resource)
+    {
+        Log::Write(L"[alert] embedded WAV resource not found: "
+            + std::to_wstring(GetLastError()));
+        return false;
+    }
+    const DWORD size = SizeofResource(module, resource);
+    HGLOBAL loaded = LoadResource(module, resource);
+    const void* wave = loaded ? LockResource(loaded) : nullptr;
+    if(!size || !wave)
+    {
+        Log::Write(L"[alert] embedded WAV resource could not be loaded: "
+            + std::to_wstring(GetLastError()));
+        return false;
+    }
+    SetLastError(ERROR_SUCCESS);
+    const bool played = PlaySoundA(static_cast<LPCSTR>(wave), nullptr,
         SND_MEMORY | SND_ASYNC | SND_NODEFAULT) != FALSE;
+    Log::Write(played ? L"[alert] embedded WAV playback started"
+        : L"[alert] PlaySound failed: " + std::to_wstring(GetLastError()));
+    return played;
 }
 
 bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory)
@@ -1904,7 +2143,13 @@ bool InstallLuaBridge(HMODULE client, std::wstring_view loaderDirectory)
     g_tramSession.store(0, std::memory_order_release);
     g_tramRetryTick.store(0, std::memory_order_release);
     g_tramUiReadyLogged.store(false, std::memory_order_release);
+    g_jbkState.store(0, std::memory_order_release);
+    g_jbkSession.store(0, std::memory_order_release);
+    g_jbkRetryTick.store(0, std::memory_order_release);
+    g_jbkUiReadyLogged.store(false, std::memory_order_release);
+    g_alertMonitorEnabled.store(false, std::memory_order_release);
     GuiResetTramState();
+    GuiResetJbkState();
     g_clientModule = client;
     CaptureHookPatches();
     g_ready.store(true, std::memory_order_release);

@@ -19,6 +19,7 @@
 #include <array>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <memory>
@@ -38,6 +39,8 @@ constexpr float CanvasHeight = 1024.0f;
 constexpr GUID DirectInput8WGuid = {0xBF798031, 0x483A, 0x4DA2,
     {0xAA, 0x99, 0x5D, 0x64, 0xED, 0x36, 0x97, 0x00}};
 constexpr GUID SystemMouseGuid = {0x6F1D2B60, 0xD5A0, 0x11CF,
+    {0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00}};
+constexpr GUID SystemKeyboardGuid = {0x6F1D2B61, 0xD5A0, 0x11CF,
     {0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00}};
 
 using PresentFn = HRESULT(__stdcall*)(IDirect3DDevice9*, const RECT*,
@@ -111,6 +114,37 @@ struct TramState
 TramState g_tramState;
 TramState g_visibleTramState;
 std::deque<std::string> g_tramCommands;
+struct JbkState
+{
+    bool loaded{};
+    bool bot{};
+    bool bhop{true};
+    bool antiAfk{true};
+    bool autoDisable{true};
+    bool siren{true};
+    bool stopOnAdmin{true};
+    bool strict{};
+    bool adminHit{};
+    bool walk{};
+    int rotationSpeed{5};
+    int bhopDelay{1000};
+    float bhopDistance{30.0f};
+    float maxZ{395.0f};
+    float maxJump{30.0f};
+    int resumeMinutes{3};
+    float stuckDistance{1.5f};
+    int stuckTime{4000};
+    int stuckMax{2};
+    float hitRadius{8.0f};
+    int hitCooldown{30};
+    int walkInterval{1200};
+    int walkDuration{200};
+    float walkDistance{15.0f};
+    std::string status{"ожидание ресурса"};
+};
+JbkState g_jbkState;
+JbkState g_visibleJbkState;
+std::deque<std::string> g_jbkCommands;
 char g_targetResource[128]{"province_ac"};
 std::uintptr_t g_selectedThread{};
 std::uintptr_t g_pendingUnload{};
@@ -118,6 +152,7 @@ bool g_luaPending{};
 bool g_eventsDirty{};
 bool g_threadsDirty{};
 bool g_tramDirty{true};
+bool g_jbkDirty{true};
 std::atomic_bool g_started{};
 std::atomic_bool g_visible{};
 std::atomic_long g_factoryState{};
@@ -126,6 +161,11 @@ std::atomic_long g_deviceState{};
 std::atomic_long g_deviceExState{};
 std::atomic_long g_inputFactoryState{};
 std::atomic_long g_inputDeviceState{};
+std::array<std::atomic_uchar, 256> g_emulatedKeys{};
+std::atomic<DWORD> g_inputErrorLogTick{};
+std::atomic_bool g_keyboardInputSeen{};
+std::atomic_bool g_keyEmulationUsed{};
+std::atomic_bool g_keyboardStreamWarningLogged{};
 bool g_initialized{};
 int g_activeTab{};
 int g_trafficState{3};
@@ -168,7 +208,38 @@ BOOL WINAPI HookClipCursor(const RECT* rectangle)
 HRESULT __stdcall HookGetDeviceState(IDirectInputDevice8W* device,
     DWORD size, void* data)
 {
-    const HRESULT result = g_getDeviceState(device, size, data);
+    HRESULT result = g_getDeviceState(device, size, data);
+    const bool keyboard = data && size == 256;
+    if(keyboard)
+    {
+        if(!g_keyboardInputSeen.exchange(true))
+            Log::Write(L"[input] DirectInput keyboard stream detected");
+        bool emulated{};
+        for(const auto& state : g_emulatedKeys)
+            emulated = emulated || state.load(std::memory_order_relaxed) != 0;
+        const DWORD now = GetTickCount();
+        if(FAILED(result) && (emulated || g_keyEmulationUsed.load(
+            std::memory_order_acquire)))
+        {
+            std::memset(data, 0, size);
+            DWORD logged = g_inputErrorLogTick.load(std::memory_order_relaxed);
+            if(now - logged >= 5000 && g_inputErrorLogTick.compare_exchange_strong(
+                logged, now, std::memory_order_relaxed))
+            {
+                wchar_t line[160]{};
+                swprintf_s(line, L"[input] GetDeviceState failed 0x%08lX; "
+                    L"serving emulated keyboard state", static_cast<unsigned long>(result));
+                Log::Write(line);
+            }
+            result = DI_OK;
+        }
+        if(SUCCEEDED(result) && !g_visible.load())
+        {
+            auto* keys = static_cast<unsigned char*>(data);
+            for(std::size_t index = 0; index < g_emulatedKeys.size(); ++index)
+                keys[index] |= g_emulatedKeys[index].load(std::memory_order_relaxed);
+        }
+    }
     if(g_visible.load() && SUCCEEDED(result) && data && size)
         std::memset(data, 0, size);
     return result;
@@ -224,7 +295,11 @@ HRESULT __stdcall HookCreateInputDevice(IDirectInput8W* api, REFGUID guid,
 {
     const HRESULT result = g_createInputDevice(api, guid, output, outer);
     if(SUCCEEDED(result) && output && *output)
+    {
         InstallInputDeviceHooks(*output);
+        if(IsEqualGUID(guid, SystemKeyboardGuid))
+            Log::Write(L"[input] DirectInput keyboard device created");
+    }
     return result;
 }
 
@@ -263,6 +338,37 @@ HRESULT WINAPI HookDirectInput8Create(HINSTANCE instance, DWORD version,
 
 void InstallGameInputHooks()
 {
+    HMODULE dinput8 = GetModuleHandleW(L"dinput8.dll");
+    if(!dinput8) dinput8 = LoadLibraryW(L"dinput8.dll");
+    void* directInput8Create = dinput8 ? reinterpret_cast<void*>(
+        GetProcAddress(dinput8, "DirectInput8Create")) : nullptr;
+    const bool inputCreated = directInput8Create
+        && MH_CreateHook(directInput8Create,
+            reinterpret_cast<void*>(&HookDirectInput8Create),
+            reinterpret_cast<void**>(&g_directInput8Create)) == MH_OK;
+    const bool inputReady = inputCreated
+        && MH_EnableHook(directInput8Create) == MH_OK;
+    if(inputReady)
+    {
+        IDirectInput8W* probe{};
+        if(SUCCEEDED(g_directInput8Create(GetModuleHandleW(nullptr),
+            DIRECTINPUT_VERSION, DirectInput8WGuid,
+            reinterpret_cast<void**>(&probe), nullptr)) && probe)
+        {
+            InstallInputFactoryHook(probe);
+            IDirectInputDevice8W* keyboard{};
+            if(SUCCEEDED(probe->CreateDevice(SystemKeyboardGuid, &keyboard, nullptr))
+                && keyboard)
+            {
+                InstallInputDeviceHooks(keyboard);
+                keyboard->Release();
+            }
+            probe->Release();
+        }
+    }
+    Log::Write(inputReady ? L"[input] DirectInput emulation hook installed"
+        : L"[input] DirectInput emulation hook failed");
+
     HMODULE user32 = GetModuleHandleW(L"user32.dll");
     void* setCursorPos = user32 ? reinterpret_cast<void*>(
         GetProcAddress(user32, "SetCursorPos")) : nullptr;
@@ -627,6 +733,14 @@ void QueueTramCommand(std::string command)
     g_tramCommands.push_back(std::move(command));
 }
 
+void QueueJbkCommand(std::string command)
+{
+    std::scoped_lock lock(g_bridgeMutex);
+    if(g_jbkCommands.size() >= 64)
+        g_jbkCommands.pop_front();
+    g_jbkCommands.push_back(std::move(command));
+}
+
 void SyncTramState()
 {
     std::scoped_lock lock(g_bridgeMutex);
@@ -634,6 +748,15 @@ void SyncTramState()
         return;
     g_visibleTramState = g_tramState;
     g_tramDirty = false;
+}
+
+void SyncJbkState()
+{
+    std::scoped_lock lock(g_bridgeMutex);
+    if(!g_jbkDirty)
+        return;
+    g_visibleJbkState = g_jbkState;
+    g_jbkDirty = false;
 }
 
 void TramButton(const char* label, const char* command)
@@ -718,6 +841,111 @@ void DrawTramBot(ImVec2 position, ImVec2 size, float scale)
     ImGui::PopStyleVar();
 }
 
+void JbkToggle(const char* label, bool& value, const char* command)
+{
+    if(ImGui::Checkbox(label, &value))
+        QueueJbkCommand(std::string(command) + (value ? ":1" : ":0"));
+}
+
+void JbkInt(const char* label, int& value, int minimum, int maximum,
+    const char* command, float scale)
+{
+    ImGui::SetNextItemWidth(105.0f * scale);
+    if(!ImGui::InputInt(label, &value, 1, 10))
+        return;
+    value = std::clamp(value, minimum, maximum);
+    QueueJbkCommand(std::string(command) + ":" + std::to_string(value));
+}
+
+void JbkFloat(const char* label, float& value, float minimum, float maximum,
+    const char* command, float scale)
+{
+    ImGui::SetNextItemWidth(105.0f * scale);
+    if(!ImGui::InputFloat(label, &value, 0.1f, 1.0f, "%.1f"))
+        return;
+    value = std::clamp(value, minimum, maximum);
+    QueueJbkCommand(std::string(command) + ":" + std::to_string(value));
+}
+
+void DrawJbkBot(ImVec2 position, ImVec2 size, float scale)
+{
+    SyncJbkState();
+    JbkState& state = g_visibleJbkState;
+    ImGui::SetCursorScreenPos(position);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * scale);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(4, 3, 12, 238));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(11, 4, 25, 245));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(52, 12, 81, 245));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(83, 18, 126, 255));
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, IM_COL32(225, 104, 255, 255));
+    ImGui::PushStyleColor(ImGuiCol_Separator, IM_COL32(128, 30, 188, 180));
+    ImGui::BeginChild("##jbk_bot", size, ImGuiChildFlags_Borders);
+    ImGui::TextColored(ImVec4(0.88f, 0.42f, 1.0f, 1.0f), "JBK BOT / DARKFLAME");
+    ImGui::SameLine();
+    ImGui::TextColored(state.loaded ? ImVec4(0.2f, 1.0f, 0.5f, 1.0f)
+        : ImVec4(1.0f, 0.35f, 0.25f, 1.0f), state.loaded ? "[LUA ONLINE]" : "[LUA OFFLINE]");
+    ImGui::SameLine();
+    ImGui::Text("| %s | %s", state.bot ? "бот включён" : "бот выключен",
+        state.status.c_str());
+    ImGui::Separator();
+
+    if(ImGui::BeginTable("##jbk_settings", 3,
+        ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_BordersInnerV))
+    {
+        ImGui::TableNextColumn();
+        ImGui::SeparatorText("Основное");
+        JbkToggle("Банни-хоп", state.bhop, "bhop");
+        JbkToggle("Анти-AFK (ПКМ)", state.antiAfk, "anti_afk");
+        JbkToggle("Сирена", state.siren, "siren");
+        JbkToggle("Автоотключение", state.autoDisable, "auto_disable");
+        JbkToggle("Стоп при админе", state.stopOnAdmin, "stop_admin");
+        JbkToggle("Строгий маршрут", state.strict, "strict");
+        JbkToggle("Удар по админу", state.adminHit, "admin_hit");
+        JbkToggle("Живая походка", state.walk, "walk");
+
+        ImGui::TableNextColumn();
+        ImGui::SeparatorText("Маршрут и защита");
+        JbkInt("Скорость поворота", state.rotationSpeed, 1, 10,
+            "rotation_speed", scale);
+        JbkInt("Задержка BH, мс", state.bhopDelay, 100, 10000,
+            "bhop_delay", scale);
+        JbkFloat("Дистанция BH", state.bhopDistance, 0.0f, 100.0f,
+            "bhop_distance", scale);
+        JbkFloat("Макс. высота", state.maxZ, 0.0f, 10000.0f,
+            "max_z", scale);
+        JbkFloat("Макс. телепорт", state.maxJump, 1.0f, 500.0f,
+            "max_jump", scale);
+        JbkInt("Авторестарт, мин", state.resumeMinutes, 1, 60,
+            "resume_minutes", scale);
+        JbkFloat("Порог застревания", state.stuckDistance, 0.1f, 20.0f,
+            "stuck_distance", scale);
+        JbkInt("Таймер застревания", state.stuckTime, 250, 30000,
+            "stuck_time", scale);
+        JbkInt("Попыток выхода", state.stuckMax, 1, 20,
+            "stuck_max", scale);
+
+        ImGui::TableNextColumn();
+        ImGui::SeparatorText("Админ и движение");
+        JbkFloat("Радиус удара", state.hitRadius, 1.0f, 100.0f,
+            "hit_radius", scale);
+        JbkInt("Кулдаун удара, сек", state.hitCooldown, 1, 600,
+            "hit_cooldown", scale);
+        JbkInt("Интервал шага, мс", state.walkInterval, 100, 10000,
+            "walk_interval", scale);
+        JbkInt("Длина шага, мс", state.walkDuration, 50, 5000,
+            "walk_duration", scale);
+        JbkFloat("Мин. дистанция шага", state.walkDistance, 0.0f, 100.0f,
+            "walk_distance", scale);
+        ImGui::Spacing();
+        ImGui::TextWrapped("F5 свободна. Окно DarkFlame: Shift+R. "
+            "Все кнопки работают через нативный Lua bridge.");
+        ImGui::EndTable();
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor(6);
+    ImGui::PopStyleVar();
+}
+
 void DrawThreadList(ImVec2 position, ImVec2 size, float scale)
 {
     SyncThreads();
@@ -789,13 +1017,15 @@ void RenderMenu()
     DrawCodeIcon(draw, point(111.0f, 453.0f), 15.0f * scale,
         IM_COL32(201, 45, 255, 255));
     DrawTab("##tab_lua", "Lua Injector", 0, point(135.0f, 421.0f),
-        extent(280.0f, 65.0f), g_activeTab == 0, draw, scale);
-    DrawTab("##tab_events", "Event Monitor", 1, point(435.0f, 421.0f),
-        extent(280.0f, 65.0f), g_activeTab == 1, draw, scale);
-    DrawTab("##tab_threads", "Lua Threads", 2, point(735.0f, 421.0f),
-        extent(280.0f, 65.0f), g_activeTab == 2, draw, scale);
-    DrawTab("##tab_tram", "TramBot", 3, point(1035.0f, 421.0f),
-        extent(280.0f, 65.0f), g_activeTab == 3, draw, scale);
+        extent(230.0f, 65.0f), g_activeTab == 0, draw, scale);
+    DrawTab("##tab_events", "Event Monitor", 1, point(385.0f, 421.0f),
+        extent(230.0f, 65.0f), g_activeTab == 1, draw, scale);
+    DrawTab("##tab_threads", "Lua Threads", 2, point(635.0f, 421.0f),
+        extent(230.0f, 65.0f), g_activeTab == 2, draw, scale);
+    DrawTab("##tab_tram", "TramBot", 3, point(885.0f, 421.0f),
+        extent(230.0f, 65.0f), g_activeTab == 3, draw, scale);
+    DrawTab("##tab_jbk", "JBK Bot", 4, point(1135.0f, 421.0f),
+        extent(230.0f, 65.0f), g_activeTab == 4, draw, scale);
     const ImVec2 contentPosition = point(105.0f, 495.0f);
     const ImVec2 contentSize = extent(1326.0f,
         g_activeTab == 0 ? 285.0f : 310.0f);
@@ -824,8 +1054,10 @@ void RenderMenu()
     }
     else if(g_activeTab == 2)
         DrawThreadList(contentPosition, contentSize, scale);
-    else
+    else if(g_activeTab == 3)
         DrawTramBot(contentPosition, contentSize, scale);
+    else
+        DrawJbkBot(contentPosition, contentSize, scale);
     ImGui::PopFont();
 
     if(g_activeTab == 0 && DrawActionButton("##inject_visual", "Inject",
@@ -846,6 +1078,12 @@ void RenderMenu()
     {
         QueueTramCommand(g_visibleTramState.bot ? "bot:0" : "bot:1");
     }
+    else if(g_activeTab == 4 && DrawActionButton("##jbk_toggle_visual",
+        g_visibleJbkState.bot ? "Остановить бота" : "Запустить бота",
+        point(410.0f, 861.0f), extent(716.0f, 104.0f), draw, scale))
+    {
+        QueueJbkCommand(g_visibleJbkState.bot ? "bot:0" : "bot:1");
+    }
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
@@ -857,7 +1095,6 @@ void RenderFrame(IDirect3DDevice9* device)
     if(!g_initialized && !InitializeGui(device))
         return;
     static bool toggleHeld{};
-    static bool tramHeld{};
     const bool toggleDown = (GetAsyncKeyState(VK_SHIFT) & 0x8000)
         && (GetAsyncKeyState('R') & 0x8000);
     if(toggleDown && !toggleHeld)
@@ -868,16 +1105,6 @@ void RenderFrame(IDirect3DDevice9* device)
             g_clipCursor(nullptr);
     }
     toggleHeld = toggleDown;
-    const bool tramDown = (GetAsyncKeyState(VK_F5) & 0x8000) != 0;
-    if(tramDown && !tramHeld)
-    {
-        const bool close = g_visible.load() && g_activeTab == 3;
-        g_activeTab = 3;
-        g_visible.store(!close);
-        if(!close && g_clipCursor)
-            g_clipCursor(nullptr);
-    }
-    tramHeld = tramDown;
     if(!g_visible.load())
     {
         ImGui::GetIO().MouseDrawCursor = false;
@@ -1151,6 +1378,28 @@ bool GuiVisible()
     return g_visible.load();
 }
 
+bool GuiEmulateKey(int virtualKey, bool pressed)
+{
+    const UINT code = MapVirtualKeyW(static_cast<UINT>(virtualKey),
+        MAPVK_VK_TO_VSC_EX);
+    UINT scan = code & 0xFF;
+    if((code & 0xFF00) == 0xE000)
+        scan |= 0x80;
+    if(!scan || scan >= g_emulatedKeys.size())
+        return false;
+    g_emulatedKeys[scan].store(pressed ? 0x80 : 0,
+        std::memory_order_release);
+    g_keyEmulationUsed.store(true, std::memory_order_release);
+    const bool hooked = g_inputDeviceState.load(std::memory_order_acquire) == 2;
+    const bool observed = g_keyboardInputSeen.load(std::memory_order_acquire);
+    if(hooked && !observed && !g_keyboardStreamWarningLogged.exchange(true))
+    {
+        Log::Write(L"[input] DirectInput hook is ready, but the game keyboard "
+            L"stream is not observed; using PostMessage fallback");
+    }
+    return hooked && observed;
+}
+
 bool GuiTakeLuaCode(std::string& code, std::string& resource)
 {
     std::scoped_lock lock(g_bridgeMutex);
@@ -1181,6 +1430,16 @@ bool GuiTakeTramCommand(std::string& command)
         return false;
     command = std::move(g_tramCommands.front());
     g_tramCommands.pop_front();
+    return true;
+}
+
+bool GuiTakeJbkCommand(std::string& command)
+{
+    std::scoped_lock lock(g_bridgeMutex);
+    if(g_jbkCommands.empty())
+        return false;
+    command = std::move(g_jbkCommands.front());
+    g_jbkCommands.pop_front();
     return true;
 }
 
@@ -1270,6 +1529,42 @@ void GuiUpdateTramState(std::string_view key, std::string_view value)
     g_tramDirty = true;
 }
 
+void GuiUpdateJbkState(std::string_view key, std::string_view value)
+{
+    const bool enabled = value == "1" || value == "true";
+    const std::string text(value);
+    const int integer = std::atoi(text.c_str());
+    const float number = std::strtof(text.c_str(), nullptr);
+    std::scoped_lock lock(g_bridgeMutex);
+    if(key == "loaded") g_jbkState.loaded = enabled;
+    else if(key == "bot") g_jbkState.bot = enabled;
+    else if(key == "bhop") g_jbkState.bhop = enabled;
+    else if(key == "anti_afk") g_jbkState.antiAfk = enabled;
+    else if(key == "auto_disable") g_jbkState.autoDisable = enabled;
+    else if(key == "siren") g_jbkState.siren = enabled;
+    else if(key == "stop_admin") g_jbkState.stopOnAdmin = enabled;
+    else if(key == "strict") g_jbkState.strict = enabled;
+    else if(key == "admin_hit") g_jbkState.adminHit = enabled;
+    else if(key == "walk") g_jbkState.walk = enabled;
+    else if(key == "rotation_speed") g_jbkState.rotationSpeed = integer;
+    else if(key == "bhop_delay") g_jbkState.bhopDelay = integer;
+    else if(key == "bhop_distance") g_jbkState.bhopDistance = number;
+    else if(key == "max_z") g_jbkState.maxZ = number;
+    else if(key == "max_jump") g_jbkState.maxJump = number;
+    else if(key == "resume_minutes") g_jbkState.resumeMinutes = integer;
+    else if(key == "stuck_distance") g_jbkState.stuckDistance = number;
+    else if(key == "stuck_time") g_jbkState.stuckTime = integer;
+    else if(key == "stuck_max") g_jbkState.stuckMax = integer;
+    else if(key == "hit_radius") g_jbkState.hitRadius = number;
+    else if(key == "hit_cooldown") g_jbkState.hitCooldown = integer;
+    else if(key == "walk_interval") g_jbkState.walkInterval = integer;
+    else if(key == "walk_duration") g_jbkState.walkDuration = integer;
+    else if(key == "walk_distance") g_jbkState.walkDistance = number;
+    else if(key == "status") g_jbkState.status = value;
+    else return;
+    g_jbkDirty = true;
+}
+
 void GuiResetTramState()
 {
     std::scoped_lock lock(g_bridgeMutex);
@@ -1282,4 +1577,12 @@ void GuiResetTramState()
     g_tramState.catcher = "не зарегистрирован";
     g_tramCommands.clear();
     g_tramDirty = true;
+}
+
+void GuiResetJbkState()
+{
+    std::scoped_lock lock(g_bridgeMutex);
+    g_jbkState = {};
+    g_jbkCommands.clear();
+    g_jbkDirty = true;
 }

@@ -2,3 +2,4 @@
 
 IDR_DARK_FLAME_BACKGROUND RCDATA "assets\\background.png"
 IDR_DARK_FLAME_BANNER RCDATA "assets\\banner.png"
+IDR_DARK_FLAME_ALERT WAVE "assets\\malfunction.wav"

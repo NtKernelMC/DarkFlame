@@ -92,13 +92,27 @@ bool ContainsI(std::string_view text, std::string_view needle)
         [](unsigned char left, unsigned char right)
         {
             return std::toupper(left) == std::toupper(right);
-        }) != text.end();
+    }) != text.end();
+}
+
+bool IsAdminPresenceMessage(std::string_view message)
+{
+    constexpr std::array<std::string_view, 10> Phrases = {
+        "зашёл", "зашел", "подключился", "вышел", "покинул сервер",
+        "отключился", "joined the server", "left the server", "connected",
+        "disconnected"
+    };
+    return std::any_of(Phrases.begin(), Phrases.end(), [&](std::string_view phrase)
+    {
+        return ContainsI(message, phrase);
+    });
 }
 
 void __fastcall HookTextDisplaySetCaption(void* self, void*, const char* caption)
 {
     g_textDisplaySetCaption(self, caption);
-    if(!caption || !GuiTramBotEnabled())
+    const bool alertMonitorEnabled = LuaAlertMonitorEnabled();
+    if(!caption || !alertMonitorEnabled)
         return;
 
     std::string message(caption);
@@ -109,10 +123,11 @@ void __fastcall HookTextDisplaySetCaption(void* self, void*, const char* caption
         return value == '\r' || value == '\n';
     }, ' ');
 
-    GuiQueueTramAdminCaption(std::move(message));
-    if(GuiTramSirenEnabled())
+    const bool presence = IsAdminPresenceMessage(message);
+    if(!presence)
         PlayTramAlertSignal();
-    Log::Write(L"[trambot] admin caption detected");
+    Log::Write(presence ? L"[alert] admin presence caption detected"
+        : L"[alert] admin caption detected");
 }
 }
 

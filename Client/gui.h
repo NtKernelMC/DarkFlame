@@ -15,9 +15,11 @@ struct GuiLuaThread
 
 bool StartGui(HMODULE module);
 bool GuiVisible();
+bool GuiEmulateKey(int virtualKey, bool pressed);
 bool GuiTakeLuaCode(std::string& code, std::string& resource);
 bool GuiTakeUnloadThread(std::uintptr_t& id);
 bool GuiTakeTramCommand(std::string& command);
+bool GuiTakeJbkCommand(std::string& command);
 bool GuiTramBotEnabled();
 bool GuiTramSirenEnabled();
 void GuiQueueTramAdminCaption(std::string caption);
@@ -26,4 +28,6 @@ void GuiRemoveLuaThread(std::uintptr_t id);
 void GuiClearLuaThreads();
 void GuiAppendEvent(std::string_view event);
 void GuiUpdateTramState(std::string_view key, std::string_view value);
+void GuiUpdateJbkState(std::string_view key, std::string_view value);
 void GuiResetTramState();
+void GuiResetJbkState();

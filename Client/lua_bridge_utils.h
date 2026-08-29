@@ -24,6 +24,9 @@ inline int VirtualKey(std::string key)
     });
     if(key.size() == 1)
     {
+        const unsigned char value = static_cast<unsigned char>(key.front());
+        if((value >= 'A' && value <= 'Z') || (value >= '0' && value <= '9'))
+            return value;
         const SHORT code = VkKeyScanA(key.front());
         return code == -1 ? 0 : LOBYTE(code);
     }

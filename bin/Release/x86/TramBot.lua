@@ -11,6 +11,7 @@ local api = {
     alert = dfPlayAlertSignal,
     takeCommand = dfTramTakeCommand,
     updateState = dfTramUpdate,
+    log = dfTramLog,
     menuOpen = dfMenuOpen,
 }
 
@@ -245,6 +246,7 @@ local lastBotState
 local train
 local currentPoint
 local markerCol
+local markerDebug
 local markerEntered = false
 local botEnabled = false
 local ignoreTraffic = false
@@ -253,6 +255,7 @@ local sirenEnabled = true
 local forceStopper = false
 local passengerAlerted = false
 local lastCollisionTick = 0
+local collisionContacts = setmetatable({}, {__mode="k"})
 local stopFrameCount = 0
 local lastPosition = 0
 local stoppedTick
@@ -262,6 +265,11 @@ local money = "0"
 local cleaning = false
 local eventCatcher
 local keyState = {}
+local debugMemory = {}
+local debugTicks = {}
+local MARKER_BRAKE_MARGIN = 2
+local doorGeneration = 0
+local doorPhase = "idle"
 
 local updateNativeMenu
 local stopBot
@@ -275,8 +283,32 @@ end
 
 local function debugOutput(text)
     if debugEnabled then
-        outputChatBox("#E6A15C[TramBot debug] #FFFFFF" .. tostring(text), 255, 255, 255, true)
+        text = tostring(text)
+        outputChatBox("#E6A15C[TramBot debug] #FFFFFF" .. text, 255, 255, 255, true)
+        api.log(text)
     end
+end
+
+local function debugChange(key, value, text)
+    if not debugEnabled then return end
+    value = tostring(value)
+    if debugMemory[key] == value then return end
+    debugMemory[key] = value
+    debugOutput(text)
+end
+
+local function debugRate(key, delay, text)
+    if not debugEnabled then return end
+    local now = getTickCount()
+    if debugTicks[key] and now - debugTicks[key] < delay then return end
+    debugTicks[key] = now
+    debugOutput(text)
+end
+
+local function pointText(point)
+    if not point then return "нет" end
+    return string.format("%s@%.2f state=%s", tostring(point[2]),
+        tonumber(point[1]) or 0, tostring(point[3] or "-"))
 end
 
 local function schedule(callback, delay, times, ...)
@@ -353,6 +385,10 @@ local function generateRoute(newDirection)
     direction = newDirection or direction
     activeRoute = copyRoute(route[direction])
     debugOutput(string.format("Маршрут %s/%s: %d точек", route.name, direction, #activeRoute))
+    if #activeRoute > 0 then
+        debugOutput("Границы маршрута: первая " .. pointText(activeRoute[1])
+            .. ", последняя " .. pointText(activeRoute[#activeRoute]))
+    end
     if updateNativeMenu then
         updateNativeMenu()
     end
@@ -365,6 +401,8 @@ local function selectRoute(key, announce)
         return false
     end
     routeKey = key
+    debugOutput(string.format("Выбор маршрута: key=%s, server=%s/%s",
+        key, tostring(route.server[1]), tostring(route.server[2])))
     measuredBrakeData = {}
     direction = "forward"
     currentPoint = nil
@@ -377,6 +415,8 @@ local function selectRoute(key, announce)
 end
 
 local function determineRoute(depot, line)
+    debugOutput(string.format("Catcher получил Tram:onJobAccepted: depot=%s, line=%s",
+        tostring(depot), tostring(line)))
     local key = routeByServer(tonumber(depot), tonumber(line))
     if key then
         selectRoute(key, true)
@@ -452,8 +492,8 @@ local function brakeDistance(speed)
 end
 
 local function setDriveKey(key, pressed, force)
-    local continuous = key == "W" or key == "S"
-    if not force and not continuous and keyState[key] == pressed then
+    local repeatDrivePress = pressed and (key == "W" or key == "S")
+    if not force and not repeatDrivePress and keyState[key] == pressed then
         return true
     end
     local ok = api.emulateKey(key, pressed)
@@ -487,10 +527,14 @@ end
 
 local function destroyMarker(resetEntered)
     if markerCol and isElement(markerCol) then
+        local x, y, z = getElementPosition(markerCol)
+        debugOutput(string.format("Удаляю колшейп: %.2f, %.2f, %.2f; resetEntered=%s",
+            x or 0, y or 0, z or 0, tostring(resetEntered == true)))
         removeHandler("onClientColShapeHit", markerCol, onMarkerHit)
         destroyElement(markerCol)
     end
     markerCol = nil
+    markerDebug = nil
     if resetEntered then
         markerEntered = false
     end
@@ -501,11 +545,14 @@ onMarkerHit = function(element)
         return
     end
     markerEntered = true
+    debugOutput("Трамвай вошёл в колшейп остановки; цель=" .. pointText(currentPoint))
     if currentPoint and currentPoint.forceStop then
+        setDriveKey("W", false, true)
+        setDriveKey("S", false, true)
         setTrainSpeed(train, 0)
         botState = "STOPPED"
         currentPoint.forceStopped = true
-        debugOutput("Force-stop внутри маркера")
+        debugOutput("Доводка завершена: W/S отпущены, speed=0; после остановки старт будет через W")
     end
     destroyMarker(false)
 end
@@ -516,39 +563,81 @@ local function createMarkerCollider()
         return false
     end
     local tx, ty, tz = getElementPosition(train)
+    local trainDimension = getElementDimension(train)
+    local trainInterior = getElementInterior(train)
     local closest
     local closestDistance = math.huge
+    local candidates = 0
+    local rejected = 0
     for _, marker in ipairs(getElementsByType("marker")) do
         local radius = getMarkerSize(marker)
-        if getMarkerType(marker) == "checkpoint" and radius > 10 then
+        local sameWorld = getElementDimension(marker) == trainDimension
+            and getElementInterior(marker) == trainInterior
+        if getMarkerType(marker) == "checkpoint" and radius > 10 and sameWorld then
+            candidates = candidates + 1
             local x, y, z = getElementPosition(marker)
             local distance = getDistanceBetweenPoints3D(tx, ty, tz, x, y, z)
             if distance < closestDistance then
                 closest = marker
                 closestDistance = distance
             end
+        elseif getMarkerType(marker) == "checkpoint" and radius > 10 then
+            rejected = rejected + 1
         end
     end
     if not closest or closestDistance >= 150 then
-        debugOutput("Checkpoint для collider не найден")
+        debugOutput(string.format("Колшейп не создан: кандидатов=%d, ближайший=%s м",
+            candidates, closest and string.format("%.1f", closestDistance) or "нет"))
+        debugOutput(string.format("Мир трамвая: dimension=%d interior=%d; чужих checkpoint=%d",
+            trainDimension, trainInterior, rejected))
         return false
     end
     local x, y, z = getElementPosition(closest)
-    markerCol = createColSphere(x, y, z, getMarkerSize(closest))
+    local radius = getMarkerSize(closest)
+    markerCol = createColSphere(x, y, z, radius)
     markerEntered = false
     if markerCol then
-        addHandler("onClientColShapeHit", markerCol, onMarkerHit)
+        setElementDimension(markerCol, trainDimension)
+        setElementInterior(markerCol, trainInterior)
+        markerDebug = {x=x, y=y, z=z, radius=radius}
+        local hooked = addHandler("onClientColShapeHit", markerCol, onMarkerHit)
+        debugOutput(string.format(
+            "Колшейп создан: xyz=%.2f/%.2f/%.2f radius=%.1f distance=%.1f candidates=%d "
+                .. "rejected=%d dim=%d int=%d handler=%s",
+            x, y, z, radius, closestDistance, candidates, rejected,
+            trainDimension, trainInterior, tostring(hooked == true)))
         return true
     end
+    debugOutput("createColSphere вернул nil для checkpoint " .. pointText(currentPoint))
     return false
 end
 
+local function drawDebugCollider()
+    if not debugEnabled or not markerDebug then return end
+    local x, y, z = markerDebug.x, markerDebug.y, markerDebug.z
+    local radius = markerDebug.radius
+    local color = tocolor(255, 90, 210, 220)
+    local segments = 32
+    for index = 0, segments - 1 do
+        local first = index * math.pi * 2 / segments
+        local second = (index + 1) * math.pi * 2 / segments
+        local c1, s1 = math.cos(first) * radius, math.sin(first) * radius
+        local c2, s2 = math.cos(second) * radius, math.sin(second) * radius
+        dxDrawLine3D(x + c1, y + s1, z, x + c2, y + s2, z, color, 2)
+        dxDrawLine3D(x + c1, y, z + s1, x + c2, y, z + s2, color, 2)
+        dxDrawLine3D(x, y + c1, z + s1, x, y + c2, z + s2, color, 2)
+    end
+end
+
 local function pulseKey(key, after)
-    if not safeDriveKey(key, true) then
+    local pressed = safeDriveKey(key, true)
+    debugOutput(string.format("Импульс %s: down=%s", key, tostring(pressed == true)))
+    if not pressed then
         return false
     end
     schedule(function()
-        setDriveKey(key, false, true)
+        local released = setDriveKey(key, false, true)
+        debugOutput(string.format("Импульс %s: up=%s", key, tostring(released == true)))
         if after then
             after()
         end
@@ -556,26 +645,70 @@ local function pulseKey(key, after)
     return true
 end
 
-local function handleDoors(continueRoute)
-    pulseKey("2", function()
+local function handleDoors(continueRoute, generation)
+    generation = generation or doorGeneration
+    if generation ~= doorGeneration or not botEnabled then
+        debugOutput("Двери: отменяю устаревшее действие generation=" .. tostring(generation))
+        return
+    end
+    local doorPoint = currentPoint
+    debugOutput(string.format("Двери: эмулирую 2, continueRoute=%s phase=%s generation=%d",
+        tostring(continueRoute == true), doorPhase, generation))
+    local pulsed = pulseKey("2", function()
+        if generation ~= doorGeneration or not botEnabled then
+            debugOutput("Двери: результат импульса устарел, продолжение отменено")
+            return
+        end
         if not continueRoute then
+            doorPhase = "open"
+            debugOutput("Двери: команда открытия завершена")
             return
         end
         schedule(function()
+            if generation ~= doorGeneration or doorPoint ~= currentPoint then
+                debugOutput("Двери: запуск отменён новой дверной операцией")
+                return
+            end
             if botState ~= "STOPPED" or not currentPoint or currentPoint[2] ~= "marker" then
                 return
             end
+            if not currentPoint.closeRequested then
+                debugOutput("Отказываюсь трогаться: сервер не запрашивал закрытие дверей")
+                return
+            end
+            doorPhase = "closed"
             local removed = table.remove(activeRoute, 1)
-            debugOutput("Остановка удалена: " .. tostring(removed and removed[1]))
+            debugOutput("Двери закрыты, защитная пауза пройдена; удаляю остановку " .. pointText(removed)
+                .. "; осталось точек=" .. tostring(#activeRoute))
             currentPoint.forceStopped = nil
             currentPoint.forceStop = nil
+            currentPoint.correctionReversed = nil
             currentPoint.retryCount = nil
             destroyMarker(true)
             currentPoint = nil
             botState = "MOVING"
             stoppedTick = nil
-        end, math.random(30, 100), 1)
+        end, math.random(500, 800), 1)
     end)
+    if not pulsed and generation == doorGeneration then
+        debugRate("door_input_blocked", 1000,
+            "Двери: импульс не прошёл, повторю через 250 мс")
+        schedule(function()
+            handleDoors(continueRoute, generation)
+        end, 250, 1)
+    end
+end
+
+local function queueDoorAction(continueRoute, minimumDelay, maximumDelay, reason)
+    doorGeneration = doorGeneration + 1
+    local generation = doorGeneration
+    local delay = math.random(minimumDelay, maximumDelay)
+    debugOutput(string.format("Двери: ставлю %s через %d мс, generation=%d, reason=%s",
+        continueRoute and "закрытие" or "открытие", delay, generation,
+        tostring(reason or "server")))
+    schedule(function()
+        handleDoors(continueRoute, generation)
+    end, delay, 1)
 end
 
 local function getButtonByText(text)
@@ -595,6 +728,7 @@ local function tramContinue()
     if not botEnabled then
         return
     end
+    debugOutput("Сервер запросил Tram:AskToContinue; ищу кнопку 'Да'")
     schedule(function()
         local button = getButtonByText("Да")
         if not button then
@@ -602,6 +736,7 @@ local function tramContinue()
             return
         end
         api.triggerEvent("onHdxElementPressed", button, "left", true)
+        debugOutput("Нажимаю HDX-кнопку продолжения маршрута")
         schedule(function()
             api.triggerEvent("onHdxElementPressed", button, "left", false)
         end, math.random(30, 70), 1)
@@ -616,8 +751,12 @@ local function recoverRoute()
     local route = routeKey and ROUTES[routeKey]
     local position = isElement(train) and getTrainPosition(train)
     if not route or not position then
+        debugOutput("Восстановление маршрута отменено: route=" .. tostring(route ~= nil)
+            .. ", position=" .. tostring(position))
         return
     end
+    debugOutput(string.format("Восстановление маршрута: position=%.2f direction=%s active=%d",
+        position, direction, #activeRoute))
     local original = route[direction]
     local closest
     local closestDistance = math.huge
@@ -630,19 +769,27 @@ local function recoverRoute()
             end
         end
     end
+    local removedCount = 0
     if closest then
+        debugOutput(string.format("Ближайшая исходная остановка: %s, distance=%.2f",
+            pointText(closest), closestDistance))
         for index, point in ipairs(activeRoute) do
             if samePoint(point, closest) then
                 for _ = 1, index do
                     table.remove(activeRoute, 1)
+                    removedCount = removedCount + 1
                 end
                 break
             end
         end
+    else
+        debugOutput("В исходном маршруте не найдена остановка для восстановления")
     end
     destroyMarker(true)
     currentPoint = nil
     botState = "MOVING"
+    debugOutput(string.format("Маршрут восстановлен: удалено=%d, осталось=%d, следующая=%s",
+        removedCount, #activeRoute, pointText(activeRoute[1])))
 end
 
 local function extractMoney(text)
@@ -653,26 +800,50 @@ local function onNotification(message)
     if not botEnabled or type(message) ~= "string" then
         return
     end
+    debugOutput("Уведомление province_tram: " .. message)
     if string.find(message, "Заработано:", 1, true) then
         updateMoney(extractMoney(message))
+        debugOutput("Обновлён заработок: " .. money)
     end
     if string.find(message, "Откройте двери и подождите пассажиров", 1, true) then
-        schedule(function() handleDoors(false) end, math.random(600, 1500), 1)
+        if currentPoint and currentPoint[2] == "marker" then
+            currentPoint.serverConfirmed = true
+            currentPoint.closeRequested = nil
+            debugOutput("Сервер подтвердил остановку: разрешено открыть двери")
+        end
+        doorPhase = "opening"
+        debugOutput("Решение: открыть двери и ждать пассажиров")
+        queueDoorAction(false, 600, 1200, "сервер запросил открытие")
     elseif string.find(message, "Закройте двери и продолжайте маршрут", 1, true) then
-        schedule(function() handleDoors(true) end, math.random(600, 1500), 1)
+        if currentPoint and currentPoint[2] == "marker" then
+            currentPoint.serverConfirmed = true
+            currentPoint.closeRequested = true
+            debugOutput("Сервер подтвердил остановку: разрешено продолжить маршрут")
+        end
+        doorPhase = "closing"
+        debugOutput("Решение: закрыть двери и удалить текущую остановку")
+        queueDoorAction(true, 80, 180, "сервер запросил закрытие")
+    elseif string.find(message, "Вы уехали не закрыв дверь", 1, true)
+        and currentPoint and currentPoint[2] == "marker" then
+        debugOutput("Ошибка двери во время остановки: маршрут НЕ двигаю, отменяю старый таймер и повторяю закрытие")
+        setDriveKey("W", false, true)
+        setDriveKey("S", false, true)
+        setTrainSpeed(train, 0)
+        botState = "STOPPED"
+        currentPoint.serverConfirmed = true
+        currentPoint.closeRequested = true
+        doorPhase = "closing"
+        queueDoorAction(true, 80, 180, "повтор после ошибки двери")
     elseif string.find(message, "Вы пропустили остановку", 1, true)
         or string.find(message, "Вы тронулись слишком быстро", 1, true)
-        or string.find(message, "Вы уехали не закрыв дверь", 1, true)
         or string.find(message, "Вы открыли двери раньше времени", 1, true) then
+        debugOutput("Решение: восстановить маршрут после ошибки остановки")
         recoverRoute()
-        if string.find(message, "двер", 1, true) then
-            handleDoors(false)
-        end
     end
 end
 
 local function onVehicleCollision(collider)
-    if source ~= getPedOccupiedVehicle(localPlayer) or not collider or not botEnabled or not sirenEnabled then
+    if source ~= getPedOccupiedVehicle(localPlayer) or not collider or not botEnabled then
         return
     end
     local kind = getElementType(collider)
@@ -680,11 +851,26 @@ local function onVehicleCollision(collider)
         return
     end
     local now = getTickCount()
-    if now - lastCollisionTick >= 30000 then
-        notify("Бот попал в ДТП!", true)
-        api.alert()
-        lastCollisionTick = now
+    local previous = collisionContacts[collider]
+    collisionContacts[collider] = now
+    if previous and now - previous < 1500 then
+        return
     end
+    debugOutput(string.format("Новый контакт ДТП: type=%s, element=%s, siren=%s",
+        tostring(kind), tostring(collider), tostring(sirenEnabled)))
+    if not sirenEnabled then
+        debugOutput("ДТП: сирена отключена в настройках")
+        return
+    end
+    local remaining = 30000 - (now - lastCollisionTick)
+    if lastCollisionTick ~= 0 and remaining > 0 then
+        debugOutput(string.format("ДТП: глобальный cooldown, осталось %d мс", remaining))
+        return
+    end
+    lastCollisionTick = now
+    notify("Бот попал в ДТП!", true)
+    local played = api.alert()
+    debugOutput("ДТП: вызов сирены вернул " .. tostring(played == true))
 end
 
 local function extractId(text)
@@ -697,12 +883,10 @@ local function onChatMessage(text, red, green, blue, messageType)
     end
     if string.find(text, "Светофоры переведены в ночной режим", 1, true) then
         ignoreTraffic = true
+        debugOutput("Чат сервера: ночной режим, светофоры игнорируются")
     elseif string.find(text, "Светофоры переведены в дневной режим", 1, true) then
         ignoreTraffic = false
-    end
-    if messageType == 0 and red == 255 and green == 164 and blue == 104
-        and string.find(text, "Администратор", 1, true) then
-        api.alert()
+        debugOutput("Чат сервера: дневной режим, светофоры учитываются")
     end
     local id = extractId(text)
     if not id then
@@ -724,7 +908,19 @@ local function onChatMessage(text, red, green, blue, messageType)
 end
 
 local function trafficGreen(expected)
-    return tonumber(getTrafficLightState()) == tonumber(expected)
+    local actual = tonumber(getTrafficLightState())
+    local wanted = tonumber(expected)
+    local green = actual == wanted
+    local point = currentPoint or activeRoute[1]
+    local position = isElement(train) and getTrainPosition(train)
+    local distance = point and position and math.abs(point[1] - position) or -1
+    local signature = string.format("%s:%s:%s", tostring(point and point[1]),
+        tostring(wanted), tostring(actual))
+    debugChange("traffic", signature, string.format(
+        "Вижу светофор %s: фактический=%s, ожидаемый=%s, distance=%.1f -> %s",
+        pointText(point), tostring(actual), tostring(wanted), distance,
+        green and "ЗЕЛЁНЫЙ" or "СТОП"))
+    return green
 end
 
 local function scanPassengers()
@@ -754,20 +950,30 @@ local lastPassengerScan = 0
 
 local function removeCurrentPoint(reason)
     local removed = table.remove(activeRoute, 1)
-    debugOutput((reason or "Точка удалена") .. ": " .. tostring(removed and removed[1]))
+    debugOutput((reason or "Точка удалена") .. ": " .. pointText(removed)
+        .. "; осталось=" .. tostring(#activeRoute)
+        .. "; следующая=" .. pointText(activeRoute[1]))
+    debugMemory.traffic = nil
+    debugMemory.target = nil
     currentPoint = nil
     expectedBrakeDistance = nil
     brakeStartPosition = nil
     stoppedTick = nil
 end
 
-local function beginBraking(point, position, distance)
+local function beginBraking(point, position, distance, triggerDistance)
     botState = "BRAKING"
     currentPoint = point
     stopFrameCount = 0
     lastPosition = position
     expectedBrakeDistance = distance
     brakeStartPosition = position
+    local actualDistance = math.abs((tonumber(point[1]) or position) - position)
+    debugOutput(string.format(
+        "Начинаю торможение: target=%s, train=%.2f, до точки=%.2f, тормоз=%.2f, порог=%.2f, speed=%.3f",
+        pointText(point), position, actualDistance, distance,
+        triggerDistance or distance,
+        math.abs(getTrainSpeed(train) or 0)))
     if point[2] == "marker" and not markerCol then
         createMarkerCollider()
     end
@@ -783,7 +989,11 @@ local function onBrakeRender()
         api.alert()
         return
     end
-    if inputBlocked() then
+    local blocked = inputBlocked()
+    debugChange("input", blocked, blocked and
+        "Управление приостановлено: открыто меню DarkFlame или чат"
+        or "Управление доступно: меню и чат закрыты")
+    if blocked then
         setDriveKey("W", false)
         setDriveKey("S", false)
         return
@@ -805,16 +1015,29 @@ local function onBrakeRender()
     end
 
     if botState ~= lastBotState then
-        debugOutput("Состояние: " .. tostring(botState))
+        debugOutput(string.format("Состояние: %s -> %s; target=%s",
+            tostring(lastBotState or "nil"), tostring(botState),
+            pointText(currentPoint or activeRoute[1])))
         lastBotState = botState
         if updateNativeMenu then
             updateNativeMenu()
         end
     end
 
+    local observedPoint = currentPoint or activeRoute[1]
+    local observedDistance = observedPoint and math.abs(observedPoint[1] - position) or -1
+    debugChange("target", tostring(observedPoint) .. ":" .. botState,
+        string.format("Текущая цель: %s; remaining=%d; distance=%.2f; speed=%.3f",
+            pointText(observedPoint), #activeRoute, observedDistance, speed))
+    debugRate("telemetry", 3000, string.format(
+        "Телеметрия: state=%s position=%.2f speed=%.3f brake=%.2f target=%s distance=%.2f",
+        botState, position, speed, stoppingDistance, pointText(observedPoint), observedDistance))
+
     if botState == "MOVING" then
         desiredW = true
         if #activeRoute == 0 then
+            debugOutput("Маршрут закончился; меняю направление " .. direction .. " -> "
+                .. (direction == "forward" and "backward" or "forward"))
             generateRoute(direction == "forward" and "backward" or "forward")
         end
         local point = activeRoute[1]
@@ -824,14 +1047,28 @@ local function onBrakeRender()
             else
                 local distance = math.abs(point[1] - position)
                 if point[2] == "marker" and point.forceStop then
-                    if not markerCol then
+                    if not markerCol and (not point.colliderRetryTick
+                        or now - point.colliderRetryTick >= 1000) then
+                        point.colliderRetryTick = now
                         createMarkerCollider()
                     end
-                elseif distance <= stoppingDistance then
-                    if point[2] == "traffic" and trafficGreen(point[3]) then
-                        removeCurrentPoint("Светофор зелёный")
-                    else
-                        beginBraking(point, position, stoppingDistance)
+                    local delta = point[1] - position
+                    local reverse = delta < -1
+                    point.correctionReversed = reverse
+                    desiredW = not reverse
+                    desiredS = reverse
+                    debugChange("correction", tostring(point) .. ":" .. tostring(reverse),
+                        string.format("Доводка к колшейпу: target=%.2f position=%.2f delta=%.2f, жму %s",
+                            point[1], position, delta, reverse and "S" or "W"))
+                else
+                    local triggerDistance = stoppingDistance
+                        + (point[2] == "marker" and MARKER_BRAKE_MARGIN or 0)
+                    if distance <= triggerDistance then
+                        if point[2] == "traffic" and trafficGreen(point[3]) then
+                            removeCurrentPoint("Светофор зелёный")
+                        else
+                            beginBraking(point, position, stoppingDistance, triggerDistance)
+                        end
                     end
                 end
             end
@@ -842,6 +1079,19 @@ local function onBrakeRender()
             and (ignoreTraffic or trafficGreen(currentPoint[3])) then
             botState = "MOVING"
             removeCurrentPoint("Светофор разрешил движение")
+        elseif currentPoint and currentPoint[2] == "marker"
+            and not markerEntered and speed <= 0.04 then
+            local remaining = math.abs(currentPoint[1] - position)
+            currentPoint.forceStop = true
+            currentPoint.retryCount = (currentPoint.retryCount or 0) + 1
+            expectedBrakeDistance = nil
+            brakeStartPosition = nil
+            botState = "MOVING"
+            desiredS = false
+            desiredW = true
+            debugOutput(string.format(
+                "Предварительную остановку отменяю: колшейп не задет, remaining=%.2f speed=%.3f; перехожу на доводку",
+                remaining, speed))
         elseif speed <= 0.01 then
             if math.abs(position - lastPosition) <= 0.1 then
                 stopFrameCount = stopFrameCount + 1
@@ -853,12 +1103,25 @@ local function onBrakeRender()
                 botState = "STOPPED"
                 setTrainSpeed(train, 0)
                 stoppedTick = now
+                debugOutput(string.format("Полная остановка: position=%.2f target=%s",
+                    position, pointText(currentPoint)))
                 if expectedBrakeDistance and brakeStartPosition then
                     local actual = math.abs(position - brakeStartPosition)
+                    debugOutput(string.format(
+                        "Проверка торможения: ожидалось=%.2f, фактически=%.2f, ошибка=%.2f",
+                        expectedBrakeDistance, actual, actual - expectedBrakeDistance))
                     if actual - expectedBrakeDistance >= 9 then
-                        removeCurrentPoint("Точка пройдена с перелётом")
-                        destroyMarker(true)
-                        botState = "MOVING"
+                        if currentPoint and currentPoint[2] == "marker" then
+                            debugOutput("Перелёт остановки: точку НЕ удаляю, включаю доводку по колшейпу")
+                            markerEntered = false
+                            currentPoint.forceStop = true
+                            createMarkerCollider()
+                            botState = "MOVING"
+                        else
+                            removeCurrentPoint("Светофор пройден с перелётом")
+                            destroyMarker(true)
+                            botState = "MOVING"
+                        end
                     end
                     expectedBrakeDistance = nil
                     brakeStartPosition = nil
@@ -869,30 +1132,38 @@ local function onBrakeRender()
         end
     elseif botState == "STOPPED" then
         if currentPoint and currentPoint[2] == "traffic" then
-            if ignoreTraffic or trafficGreen(currentPoint[3]) or stoppedTick and now - stoppedTick > 20000 then
+            local green = ignoreTraffic or trafficGreen(currentPoint[3])
+            local timeout = stoppedTick and now - stoppedTick > 20000
+            if green or timeout then
+                debugOutput("Продолжаю после светофора: причина="
+                    .. (ignoreTraffic and "игнор" or green and "зелёный" or "таймаут 20с"))
                 removeCurrentPoint("Светофор завершён")
                 botState = "MOVING"
             end
         elseif currentPoint and currentPoint[2] == "marker" then
             if not markerEntered and markerCol then
-                if not currentPoint.retryCount then
-                    currentPoint.retryCount = 1
-                    botState = "MOVING"
-                    debugOutput("Недоезд до маркера, повторная попытка")
-                else
-                    currentPoint.forceStop = true
-                    botState = "MOVING"
-                    createMarkerCollider()
-                    debugOutput("Повторный недоезд, force-stop")
-                end
+                currentPoint.retryCount = (currentPoint.retryCount or 0) + 1
+                currentPoint.forceStop = true
+                botState = "MOVING"
+                debugOutput("Остановка вне колшейпа: включаю доводку, попытка="
+                    .. tostring(currentPoint.retryCount))
+            elseif not markerEntered and not markerCol then
+                currentPoint.forceStop = true
+                createMarkerCollider()
+                botState = "MOVING"
+                debugOutput("Колшейп потерян: пересоздан, включаю доводку")
             elseif stoppedTick and now - stoppedTick > 20000 then
-                removeCurrentPoint("Остановка зависла")
-                destroyMarker(true)
+                debugOutput("Сервер не подтвердил остановку за 20с: повторяю вход в колшейп")
+                markerEntered = false
+                currentPoint.forceStop = true
+                createMarkerCollider()
                 botState = "MOVING"
             end
         end
     end
 
+    debugChange("drive", tostring(desiredW) .. ":" .. tostring(desiredS),
+        string.format("Команды движения: W=%s, S=%s", tostring(desiredW), tostring(desiredS)))
     safeDriveKey("W", desiredW)
     safeDriveKey("S", desiredS)
 end
@@ -935,11 +1206,15 @@ end
 
 stopBot = function(reason)
     local wasEnabled = botEnabled
+    debugOutput("Остановка бота: reason=" .. tostring(reason or "ручная")
+        .. ", state=" .. tostring(botState) .. ", target=" .. pointText(currentPoint))
     if wasEnabled then
         botEnabled = false
         removeHandler("onClientRender", root, onBrakeRender)
     end
     botState = "IDLE"
+    doorGeneration = doorGeneration + 1
+    doorPhase = "idle"
     releaseKeys()
     if wasEnabled then
         stopCruiseLights()
@@ -967,6 +1242,8 @@ local function startBot()
         return false
     end
     train = vehicle
+    debugOutput(string.format("Запуск: model=%s route=%s direction=%s activePoints=%d",
+        tostring(getElementModel(train)), tostring(routeKey), direction, #activeRoute))
     if not next(measuredBrakeData) and not chooseBrakeProfile(train) then
         return false
     end
@@ -980,6 +1257,7 @@ local function startBot()
     addHandler("onClientRender", root, onBrakeRender)
     startCruiseLights()
     notify("Бот включен.")
+    debugOutput("Бот запущен; первая цель=" .. pointText(activeRoute[1]))
     if updateNativeMenu then
         updateNativeMenu()
     end
@@ -1145,9 +1423,12 @@ local function saveRoutePoint(kind, state)
     end
     routeTable[#routeTable + 1] = {position, kind, tostring(state or "228")}
     notify(kind == "marker" and "Участок сохранён." or "Светофор сохранён.")
+    debugOutput(string.format("Запись маршрута #%d: %s", #routeTable,
+        pointText(routeTable[#routeTable])))
 end
 
 local function dumpRouteTable()
+    debugOutput("Дамп routeTable: точек=" .. tostring(#routeTable))
     outputConsole("local route_table = {")
     for _, point in ipairs(routeTable) do
         outputConsole(string.format("    { %.14g, %q, %q },", point[1], point[2], point[3]))
@@ -1167,6 +1448,8 @@ local function startJob(key)
         notify("Ресурс province_tram не найден.", true)
         return
     end
+    debugOutput(string.format("Отправляю Tram:onJobAccepted: route=%s depot=%s line=%s",
+        key, tostring(route.server[1]), tostring(route.server[2])))
     api.triggerServerEvent("Tram:onJobAccepted", resourceRoot, route.server[1], route.server[2])
 end
 
@@ -1193,6 +1476,9 @@ updateNativeMenu = pushNativeState
 
 local function handleCommand(command)
     local name, value = tostring(command):match("^([^:]+):?(.*)$")
+    if name ~= "debug" then
+        debugOutput("Команда ImGui: " .. tostring(name) .. ":" .. tostring(value))
+    end
     if name == "bot" then
         if value == "1" then
             startBot()
@@ -1202,7 +1488,18 @@ local function handleCommand(command)
     elseif name == "traffic" then
         ignoreTraffic = value == "1"
     elseif name == "debug" then
-        debugEnabled = value == "1"
+        local enabled = value == "1"
+        if debugEnabled and not enabled then
+            debugOutput("Отладка выключена пользователем")
+        end
+        debugEnabled = enabled
+        debugMemory = {}
+        debugTicks = {}
+        if debugEnabled then
+            debugOutput(string.format(
+                "Отладка включена: bot=%s state=%s route=%s direction=%s points=%d",
+                tostring(botEnabled), botState, tostring(routeKey), direction, #activeRoute))
+        end
     elseif name == "siren" then
         sirenEnabled = value == "1"
     elseif name == "force" then
@@ -1214,6 +1511,7 @@ local function handleCommand(command)
     elseif name == "save_traffic" then
         saveRoutePoint("traffic", value ~= "" and value or "3")
     elseif name == "clear_route" then
+        debugOutput("Очистка routeTable: удаляется точек=" .. tostring(#routeTable))
         routeTable = {}
         notify("Таблица маршрута очищена.")
     elseif name == "dump_route" then
@@ -1223,10 +1521,15 @@ local function handleCommand(command)
     elseif name == "calibrate" then
         schedule(startCalibration, 200, 1)
     elseif name == "test_siren" then
-        api.alert()
+        local played = api.alert()
+        debugOutput("Тест сирены: dfPlayAlertSignal вернул " .. tostring(played == true))
+        if not played then
+            notify("Не удалось запустить сирену — смотри DarkFlame.log", true)
+        end
     elseif name == "admin" then
         outputChatBox("#00FF00[ТРЕВОГА] Админ крикнул: #FF6600" .. value, 255, 255, 255, true)
     elseif name == "force_stop" and isElement(train) then
+        debugOutput("Force-stop из ImGui: setTrainSpeed(0)")
         setTrainSpeed(train, 0)
     end
     pushNativeState()
@@ -1267,6 +1570,7 @@ local function cleanup()
         destroyElement(markerCol)
     end
     markerCol = nil
+    markerDebug = nil
     for index = #handlers, 1, -1 do
         local item = handlers[index]
         api.removeEventHandler(item[1], item[2], item[3])
@@ -1283,6 +1587,7 @@ addHandler("Tram:AskToContinue", root, tramContinue)
 addHandler("province:sendNotification", root, onNotification)
 addHandler("onClientVehicleCollision", root, onVehicleCollision)
 addHandler("onClientChatMessage", root, onChatMessage)
+addHandler("onClientRender", root, drawDebugCollider)
 addHandler("onClientResourceStop", root, function(stoppedResource)
     if stoppedResource == getThisResource() or source == resourceRoot then
         cleanup()
