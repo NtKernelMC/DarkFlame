@@ -19,6 +19,7 @@
 #include <array>
 #include <atomic>
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -176,6 +177,7 @@ bool LuaIdentity(void* lua, void*& owner, void*& state);
 bool LuaStateAlive(void* state, void* owner = nullptr);
 std::string CurrentLuaResource(void* lua);
 int __cdecl DirectTriggerServerEvent(void* lua);
+int __cdecl DirectSyncEvent(void* lua);
 int __cdecl DirectTriggerEvent(void* lua);
 int __cdecl DirectAddEvent(void* lua);
 int __cdecl DirectAddEventHandler(void* lua);
@@ -377,6 +379,7 @@ int __cdecl DirectJbkUpdate(void* lua)
 void RegisterDirectAliases(void* lua)
 {
     RegisterPrivate(lua, "dfTriggerServerEvent", &DirectTriggerServerEvent);
+    RegisterPrivate(lua, "dfSyncEvent", &DirectSyncEvent);
     RegisterPrivate(lua, "dfTriggerEvent", &DirectTriggerEvent);
     RegisterPrivate(lua, "dfAddEvent", &DirectAddEvent);
     RegisterPrivate(lua, "dfAddEventHandler", &DirectAddEventHandler);
@@ -525,6 +528,91 @@ int __cdecl DirectTriggerServerEvent(void* lua)
     const int result = g_triggerServerEvent(lua);
     ClearNetcLuaCallContext();
     return result;
+}
+
+int __cdecl DirectSyncEvent(void* lua)
+{
+    const int top = DarkFlameLuaGetTop(lua);
+    const int sourceType = top >= 5 ? DarkFlameLuaType(lua, 5) : -1;
+    Log::Write(L"[lua-bridge] dfSyncEvent entered: argc="
+        + std::to_wstring(top) + L" source-type="
+        + std::to_wstring(sourceType));
+    if(!g_triggerServerEvent || top < 5
+        || !DarkFlameLuaIsNumber(lua, 1)
+        || !DarkFlameLuaIsNumber(lua, 2)
+        || !DarkFlameLuaIsNumber(lua, 3)
+        || DarkFlameLuaType(lua, 4) != 4
+        || (sourceType != 2 && sourceType != 7))
+    {
+        Log::Write(L"[lua-bridge] dfSyncEvent rejected: bad arguments or "
+            L"TriggerServerEvent is unavailable");
+        return PushDirectResult(lua, false);
+    }
+
+    const float x = static_cast<float>(DarkFlameLuaToNumber(lua, 1));
+    const float y = static_cast<float>(DarkFlameLuaToNumber(lua, 2));
+    const float z = static_cast<float>(DarkFlameLuaToNumber(lua, 3));
+    if(!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)
+        || x < -8192.0f || x > 8191.0f
+        || y < -8192.0f || y > 8191.0f
+        || z <= -100000.0f || z >= 100000.0f)
+    {
+        Log::Write(L"[lua-bridge] dfSyncEvent rejected: position is outside "
+            L"the supported sync range");
+        return PushDirectResult(lua, false);
+    }
+
+    float oldX{};
+    float oldY{};
+    float oldZ{};
+    if(!ReadLocalPlayerPosition(oldX, oldY, oldZ))
+    {
+        Log::Write(L"[lua-bridge] dfSyncEvent rejected: current player "
+            L"position is unavailable");
+        return PushDirectResult(lua, false);
+    }
+
+    DarkFlameLuaRemove(lua, 1);
+    DarkFlameLuaRemove(lua, 1);
+    DarkFlameLuaRemove(lua, 1);
+    const int eventArguments = DarkFlameLuaGetTop(lua);
+
+    BeginPlayerPureSyncSuppression();
+    const bool sentNew = SendReliablePlayerPureSync(x, y, z);
+    int callResult = 1;
+    bool callSucceeded{};
+    bool eventAccepted{};
+    if(sentNew)
+    {
+        DarkFlameLuaPushCFunction(lua, &DirectTriggerServerEvent);
+        DarkFlameLuaInsert(lua, 1);
+        callResult = DarkFlameLuaPCall(lua, eventArguments, -1, 0);
+        callSucceeded = callResult == 0;
+        eventAccepted = callSucceeded && DarkFlameLuaGetTop(lua) > 0
+            && DarkFlameLuaToBoolean(lua, -1) != 0;
+        if(!callSucceeded)
+        {
+            Log::Write(L"[lua-bridge] dfSyncEvent server event failed: "
+                + WideAscii(LuaText(lua, -1, 1024, false)));
+        }
+    }
+    const bool sentOld = sentNew
+        && SendReliablePlayerPureSync(oldX, oldY, oldZ);
+    EndPlayerPureSyncSuppression();
+
+    Log::Write(L"[lua-bridge] dfSyncEvent stages: new="
+        + std::to_wstring(sentNew ? 1 : 0) + L" event-call="
+        + std::to_wstring(callSucceeded ? 1 : 0) + L" event-result="
+        + std::to_wstring(eventAccepted ? 1 : 0) + L" old="
+        + std::to_wstring(sentOld ? 1 : 0));
+
+    if(!sentNew || !callSucceeded || !eventAccepted || !sentOld)
+    {
+        DarkFlameLuaSetTop(lua, 0);
+        return PushDirectResult(lua, false);
+    }
+    DarkFlameLuaSetTop(lua, 0);
+    return PushDirectResult(lua, true);
 }
 
 int __cdecl DirectAddEvent(void* lua)
@@ -1036,7 +1124,8 @@ std::string ManagedChunk(std::uintptr_t id, std::string_view userCode)
         "if not S then S={} rawset(B,'__darkFlameThreads',S) end "
         "local C={} local function T(f) C[#C+1]=f end local E={} E._G=E "
         "E.onUnload=function(f) if B.type(f)=='function' then T(f) return true end return false end "
-        "E.triggerServerEvent=B.dfTriggerServerEvent E.triggerEvent=B.dfTriggerEvent "
+        "E.triggerServerEvent=B.dfTriggerServerEvent E.dfSyncEvent=B.dfSyncEvent "
+        "E.triggerEvent=B.dfTriggerEvent "
         "E.addEvent=B.dfAddEvent E.removeEventHandler=B.dfRemoveEventHandler "
         "E.addDebugHook=function(t,f,n) local o=B.dfAddDebugHook(t,f,n) "
         "if o then T(function() B.dfRemoveDebugHook(t,f) end) end return o end "

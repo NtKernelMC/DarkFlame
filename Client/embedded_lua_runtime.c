@@ -21,6 +21,16 @@ void DarkFlameLuaSetTop(void* state, int index)
     lua_settop((lua_State*)state, index);
 }
 
+int DarkFlameLuaIsNumber(void* state, int index)
+{
+    return lua_isnumber((lua_State*)state, index);
+}
+
+double DarkFlameLuaToNumber(void* state, int index)
+{
+    return lua_tonumber((lua_State*)state, index);
+}
+
 const char* DarkFlameLuaToLString(void* state, int index, size_t* size)
 {
     return lua_tolstring((lua_State*)state, index, size);
@@ -69,6 +79,21 @@ int DarkFlameLuaNext(void* state, int index)
 void DarkFlameLuaPushValue(void* state, int index)
 {
     lua_pushvalue((lua_State*)state, index);
+}
+
+void DarkFlameLuaPushCFunction(void* state, DarkFlameLuaCFunction function)
+{
+    lua_pushcclosure((lua_State*)state, (lua_CFunction)function, 0);
+}
+
+void DarkFlameLuaInsert(void* state, int index)
+{
+    lua_insert((lua_State*)state, index);
+}
+
+void DarkFlameLuaRemove(void* state, int index)
+{
+    lua_remove((lua_State*)state, index);
 }
 
 static int AbsoluteIndex(lua_State* lua, int index)

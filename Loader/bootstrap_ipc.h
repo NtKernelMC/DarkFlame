@@ -24,6 +24,7 @@ public:
         m_data.magic = BootstrapProtocol::DataMagic;
         m_data.version = BootstrapProtocol::DataVersion;
         m_data.antiShadow = config.antiShadow;
+        m_data.scriptsDumper = config.scriptsDumper;
         m_data.setSerial = config.setSerial;
         m_data.randomSerial = config.randomSerial;
         if(!Copy(m_data.logDirectory, logDirectory)

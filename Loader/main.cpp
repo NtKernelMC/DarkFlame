@@ -379,6 +379,10 @@ void DrawSettings(ImVec2 position, ImVec2 size)
         SaveConfig();
 
     ImGui::SetCursorScreenPos({position.x + 20.0f, position.y + 112.0f});
+    if(ImGui::Checkbox("Scripts Dumper", &g_config.scriptsDumper))
+        SaveConfig();
+
+    ImGui::SetCursorScreenPos({position.x + 20.0f, position.y + 162.0f});
     if(ImGui::Checkbox("Black Mirror", &g_config.setSerial))
     {
         if(g_config.setSerial)
@@ -386,7 +390,7 @@ void DrawSettings(ImVec2 position, ImVec2 size)
         SaveConfig();
     }
 
-    ImGui::SetCursorScreenPos({position.x + 20.0f, position.y + 162.0f});
+    ImGui::SetCursorScreenPos({position.x + 20.0f, position.y + 212.0f});
     if(ImGui::Checkbox("Random Serial", &g_config.randomSerial))
     {
         if(g_config.randomSerial)
@@ -394,11 +398,11 @@ void DrawSettings(ImVec2 position, ImVec2 size)
         SaveConfig();
     }
 
-    ImGui::SetCursorScreenPos({position.x + 20.0f, position.y + 219.0f});
+    ImGui::SetCursorScreenPos({position.x + 20.0f, position.y + 269.0f});
     ImGui::TextUnformatted("Serial");
     ImGui::PopFont();
 
-    ImGui::SetCursorScreenPos({position.x + 20.0f, position.y + 245.0f});
+    ImGui::SetCursorScreenPos({position.x + 20.0f, position.y + 295.0f});
     ImGui::SetNextItemWidth(size.x - 40.0f);
     ImGui::PushFont(g_serialFont, g_serialFont->LegacySize);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {12.0f, 9.0f});
@@ -414,7 +418,7 @@ void DrawSettings(ImVec2 position, ImVec2 size)
     if(changed && Config::ValidSerial(g_serial.data()))
         SaveConfig();
 
-    ImGui::SetCursorScreenPos({position.x + 20.0f, position.y + 295.0f});
+    ImGui::SetCursorScreenPos({position.x + 20.0f, position.y + 345.0f});
     ImGui::PushFont(g_codeFont, g_codeFont->LegacySize);
     if(g_config.setSerial && !Config::ValidSerial(g_serial.data()))
         ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.48f, 1.0f),
@@ -613,7 +617,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 {
     SetProcessDPIAware();
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    RuntimeLog::Clear();
+    RuntimeLog::BeginSession();
     g_directory = LoaderPath::OwnDirectory();
     g_config = Config::Load(g_directory);
     std::memcpy(g_serial.data(), g_config.publicSerial.data(),

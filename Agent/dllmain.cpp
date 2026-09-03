@@ -41,6 +41,8 @@ namespace
                 data.clientLoadedEvent)
             && SetEnvironmentVariableW(BootstrapProtocol::AntiShadowVariable,
                 data.antiShadow ? L"1" : L"0")
+            && SetEnvironmentVariableW(BootstrapProtocol::ScriptsDumperVariable,
+                data.scriptsDumper ? L"1" : L"0")
             && SetEnvironmentVariableW(BootstrapProtocol::SetSerialVariable,
                 data.setSerial ? L"1" : L"0")
             && SetEnvironmentVariableW(BootstrapProtocol::RandomSerialVariable,
@@ -57,6 +59,7 @@ namespace
         Environment::Clear(BootstrapProtocol::AgentReadyEventVariable);
         Environment::Clear(BootstrapProtocol::ClientLoadedEventVariable);
         Environment::Clear(BootstrapProtocol::AntiShadowVariable);
+        Environment::Clear(BootstrapProtocol::ScriptsDumperVariable);
         Environment::Clear(BootstrapProtocol::SetSerialVariable);
         Environment::Clear(BootstrapProtocol::RandomSerialVariable);
         Environment::Clear(BootstrapProtocol::PublicSerialVariable);
@@ -93,7 +96,9 @@ namespace
             return created;
         }
 
-        const bool mapped = MapLibrary(processInformation->hProcess, g_clientPath);
+        bool exceptionSupport{};
+        const bool mapped = MapLibrary(processInformation->hProcess, g_clientPath,
+            &exceptionSupport);
         const DWORD mapError = GetLastError();
         ClearBootstrapEnvironment();
         if (!mapped)
@@ -113,6 +118,9 @@ namespace
         if (g_clientLoadedEvent)
             SetEvent(g_clientLoadedEvent);
         RuntimeLog::Write(L"[agent] DarkFlameClient mapped before gta_sa.exe resume");
+        RuntimeLog::Write(exceptionSupport
+            ? L"[agent] manual-map exception support registered without PEB entry"
+            : L"[agent] manual-map exception support unavailable");
         CloseClientLoadedEvent();
         if (!(creationFlags & CREATE_SUSPENDED))
             ResumeThread(processInformation->hThread);
@@ -179,12 +187,16 @@ BOOL WINAPI DllMain(HMODULE module, DWORD reason, void* reserved)
             return FALSE;
         RuntimeLog::Write(L"[agent] DllMain attached");
         const std::wstring agentPath = Environment::Read(BootstrapProtocol::AgentPathVariable);
-        if (!CrashHandler::Install(module, agentPath, L"DarkFlameAgent"))
+        const std::wstring logDirectory = Environment::Read(
+            BootstrapProtocol::LogDirectoryVariable);
+        if (!CrashHandler::Install(module, agentPath, L"DarkFlameAgent",
+            logDirectory))
         {
             RuntimeLog::Write(L"[agent] crash handler initialization failed");
             ClearBootstrapEnvironment();
             return FALSE;
         }
+        RuntimeLog::Write(L"[agent] crash handler ready");
         HANDLE thread = CreateThread(nullptr, 0, &BootstrapThread, nullptr, 0, nullptr);
         if (!thread)
         {

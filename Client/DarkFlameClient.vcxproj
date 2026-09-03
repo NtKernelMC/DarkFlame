@@ -52,7 +52,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <ProgramDatabaseFile>$(OutDir)$(TargetName).pdb</ProgramDatabaseFile>
-      <AdditionalDependencies>Advapi32.lib;Iphlpapi.lib;Wbemuuid.lib;OleAut32.lib;Dbghelp.lib;d3d9.lib;windowscodecs.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Advapi32.lib;Iphlpapi.lib;Wbemuuid.lib;OleAut32.lib;Dbghelp.lib;d3d9.lib;windowscodecs.lib;ole32.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -67,6 +67,7 @@
     <ClCompile Include="lua_bridge.cpp" />
     <ClCompile Include="memory_module_dumper.cpp" />
     <ClCompile Include="netc_hooks.cpp" />
+    <ClCompile Include="script_dumper.cpp" />
     <ClCompile Include="privacy_hooks.cpp" />
     <ClCompile Include="signature_scanner.cpp" />
     <ClCompile Include="text_display_hook.cpp" />
@@ -95,6 +96,16 @@
     <ClCompile Include="third_party\imgui\backends\imgui_impl_dx9.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="third_party\imgui\backends\imgui_impl_win32.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="third_party\ImGuiColorTextEdit\TextEditor.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\ByteRevenant\Decompiler.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\ByteRevenant\Gafnium.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\ByteRevenant\Lua51.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\zlib\adler32.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\zlib\crc32.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\zlib\inffast.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\zlib\inflate.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\zlib\inftrees.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\zlib\uncompr.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="third_party\zlib\zutil.c"><CompileAs>CompileAsC</CompileAs><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="..\Agent\third_party\minhook\buffer.c"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="..\Agent\third_party\minhook\hook.c"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="..\Agent\third_party\minhook\trampoline.c"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
@@ -141,6 +152,7 @@
     <ClInclude Include="memory_module_dumper.h" />
     <ClInclude Include="netc_hooks.h" />
     <ClInclude Include="netc_signatures.h" />
+    <ClInclude Include="script_dumper.h" />
     <ClInclude Include="privacy_hooks.h" />
     <ClInclude Include="signature_scanner.h" />
     <ClInclude Include="text_display_hook.h" />
@@ -152,6 +164,19 @@
     <ClInclude Include="third_party\imgui\backends\imgui_impl_dx9.h" />
     <ClInclude Include="third_party\imgui\backends\imgui_impl_win32.h" />
     <ClInclude Include="third_party\ImGuiColorTextEdit\TextEditor.h" />
+    <ClInclude Include="third_party\ByteRevenant\Common.hpp" />
+    <ClInclude Include="third_party\ByteRevenant\Decompiler.hpp" />
+    <ClInclude Include="third_party\ByteRevenant\Gafnium.hpp" />
+    <ClInclude Include="third_party\ByteRevenant\Lua51.hpp" />
+    <ClInclude Include="third_party\zlib\crc32.h" />
+    <ClInclude Include="third_party\zlib\gzguts.h" />
+    <ClInclude Include="third_party\zlib\inffast.h" />
+    <ClInclude Include="third_party\zlib\inffixed.h" />
+    <ClInclude Include="third_party\zlib\inflate.h" />
+    <ClInclude Include="third_party\zlib\inftrees.h" />
+    <ClInclude Include="third_party\zlib\zconf.h" />
+    <ClInclude Include="third_party\zlib\zlib.h" />
+    <ClInclude Include="third_party\zlib\zutil.h" />
     <ClInclude Include="..\Shared\bootstrap_protocol.h" />
     <ClInclude Include="..\Shared\crash_handler.h" />
     <ClInclude Include="..\Shared\environment.h" />

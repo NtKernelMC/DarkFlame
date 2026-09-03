@@ -12,6 +12,7 @@
 struct DarkFlameConfig
 {
     bool antiShadow{true};
+    bool scriptsDumper{};
     bool setSerial{};
     bool randomSerial{};
     bool serialValid{true};
@@ -22,6 +23,7 @@ namespace Config
 {
 inline constexpr std::string_view Defaults =
     "ANTI_SHADOW=1\n"
+    "SCRIPTS_DUMPER=0\n"
     "SET_SERIAL=0\n"
     "RANDOM_SERIAL=0\n"
     "PUBLIC_SERIAL=9F5A1A5F9008ED9327D64B4A700324F3\n";
@@ -75,6 +77,8 @@ inline DarkFlameConfig Load(const std::wstring& directory)
         Upper(key);
         if(key == "ANTI_SHADOW")
             config.antiShadow = value != "0";
+        else if(key == "SCRIPTS_DUMPER")
+            config.scriptsDumper = value == "1";
         else if(key == "SET_SERIAL")
             config.setSerial = value == "1";
         else if(key == "RANDOM_SERIAL")
@@ -100,6 +104,7 @@ inline bool Save(const std::wstring& directory, const DarkFlameConfig& config)
     const std::filesystem::path path = std::filesystem::path(directory) / L"DarkFlame.cfg";
     const std::filesystem::path temporary = path.wstring() + L".tmp";
     std::string text = "ANTI_SHADOW=" + std::string(config.antiShadow ? "1\n" : "0\n")
+        + "SCRIPTS_DUMPER=" + std::string(config.scriptsDumper ? "1\n" : "0\n")
         + "SET_SERIAL=" + std::string(config.setSerial ? "1\n" : "0\n")
         + "RANDOM_SERIAL=" + std::string(config.randomSerial ? "1\n" : "0\n")
         + "PUBLIC_SERIAL=" + config.publicSerial + "\n";

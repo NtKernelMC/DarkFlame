@@ -4,4 +4,5 @@
 
 #include <string>
 
-bool MapLibrary(HANDLE process, const std::wstring& path);
+bool MapLibrary(HANDLE process, const std::wstring& path,
+    bool* exceptionSupport = nullptr);

@@ -34,9 +34,6 @@ inline _invalid_parameter_handler g_previousInvalidParameter{};
 inline _purecall_handler g_previousPureCall{};
 inline std::terminate_handler g_previousTerminate{};
 inline void(__cdecl* g_previousAbort)(int) = SIG_DFL;
-inline void(__cdecl* g_previousIllegalInstruction)(int) = SIG_DFL;
-inline void(__cdecl* g_previousFloatingPoint)(int) = SIG_DFL;
-inline void(__cdecl* g_previousSegmentation)(int) = SIG_DFL;
 inline BYTE* g_filterTarget{};
 inline BYTE g_filterBackup[5]{};
 inline bool g_filterPatched{};
@@ -67,16 +64,23 @@ inline bool Copy(wchar_t (&destination)[Size], std::wstring_view source)
     return true;
 }
 
-inline void BuildArtifactDirectory()
+inline void BuildArtifactDirectory(std::wstring_view preferredDirectory)
 {
-    wchar_t base[1024]{};
-    const std::wstring directory = Environment::Read(BootstrapProtocol::LogDirectoryVariable);
+    std::wstring directory(preferredDirectory);
+    if(directory.empty())
+        directory = Environment::Read(BootstrapProtocol::LogDirectoryVariable);
     if (!directory.empty())
-        wcscpy_s(base, directory.c_str());
+    {
+        swprintf_s(g_artifactDirectory, L"%ls\\CrashDumps", directory.c_str());
+        CreateDirectoryW(g_artifactDirectory, nullptr);
+        return;
+    }
+
+    wchar_t base[1024]{};
+    if(g_imagePath[0])
+        wcscpy_s(base, g_imagePath);
     else
         GetModuleFileNameW(nullptr, base, static_cast<DWORD>(std::size(base)));
-    if (!base[0] && g_imagePath[0])
-        wcscpy_s(base, g_imagePath);
 
     if (wchar_t* separator = std::wcsrchr(base, L'\\'))
         *separator = L'\0';
@@ -135,6 +139,7 @@ inline const char* ExceptionName(DWORD code)
     case EXCEPTION_INT_DIVIDE_BY_ZERO: return "EXCEPTION_INT_DIVIDE_BY_ZERO";
     case EXCEPTION_INT_OVERFLOW: return "EXCEPTION_INT_OVERFLOW";
     case EXCEPTION_STACK_OVERFLOW: return "EXCEPTION_STACK_OVERFLOW";
+    case 0xC00001A5u: return "STATUS_INVALID_EXCEPTION_HANDLER";
     case 0xC0000409u: return "STATUS_STACK_BUFFER_OVERRUN";
     case 0xC0000602u: return "STATUS_FAIL_FAST_EXCEPTION";
     case 0xE06D7363u: return "MSVC_CPP_EXCEPTION";
@@ -184,6 +189,19 @@ inline bool LoadSymbols()
         || SymGetModuleInfoW64(g_process, g_imageBase, &module) == TRUE;
     if (!registered)
         return false;
+
+    const auto* base = reinterpret_cast<const BYTE*>(
+        static_cast<std::uintptr_t>(g_imageBase));
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS32*>(
+        base + dos->e_lfanew);
+    char symbolBuffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME]{};
+    auto* symbol = reinterpret_cast<SYMBOL_INFO*>(symbolBuffer);
+    symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+    symbol->MaxNameLen = MAX_SYM_NAME;
+    DWORD64 displacement{};
+    SymFromAddr(g_process, g_imageBase
+        + nt->OptionalHeader.AddressOfEntryPoint, &displacement, symbol);
 
     module = {};
     module.SizeOfStruct = sizeof(module);
@@ -317,6 +335,16 @@ inline LONG WriteReport(const char* reason, PEXCEPTION_POINTERS exception)
     Write(log, "Exception: 0x%08lX (%s), address=0x%08llX\r\n",
         code, ExceptionName(code),
         reinterpret_cast<unsigned long long>(exception->ExceptionRecord->ExceptionAddress));
+    if(code == EXCEPTION_ACCESS_VIOLATION
+        && exception->ExceptionRecord->NumberParameters >= 2)
+    {
+        const ULONG_PTR operation = exception->ExceptionRecord->ExceptionInformation[0];
+        const char* action = operation == 0 ? "read"
+            : operation == 1 ? "write" : operation == 8 ? "execute" : "access";
+        Write(log, "Access violation: %s address 0x%08llX\r\n", action,
+            static_cast<unsigned long long>(
+                exception->ExceptionRecord->ExceptionInformation[1]));
+    }
     Write(log, "Symbols: %s, image=%ls\r\n", g_symbolsReady ? "PDB loaded" : "unavailable",
         g_imagePath);
     Write(log, "EAX=%08lX EBX=%08lX ECX=%08lX EDX=%08lX ESI=%08lX EDI=%08lX\r\n",
@@ -342,7 +370,8 @@ inline LONG CALLBACK VectoredFilter(PEXCEPTION_POINTERS exception)
         return EXCEPTION_CONTINUE_SEARCH;
     const DWORD code = exception->ExceptionRecord->ExceptionCode;
     const bool immediate = code == EXCEPTION_STACK_OVERFLOW
-        || code == 0xC0000409u || code == 0xC0000602u;
+        || code == 0xC00001A5u || code == 0xC0000409u
+        || code == 0xC0000602u;
     if (immediate && IsInMappedImage(exception->ContextRecord->Eip))
         WriteReport("first-chance fatal exception", exception);
     return EXCEPTION_CONTINUE_SEARCH;
@@ -418,7 +447,8 @@ inline void UnpatchUnhandledFilter()
     g_filterTarget = nullptr;
 }
 
-inline bool Install(HMODULE image, std::wstring_view imagePath, std::wstring_view moduleName)
+inline bool Install(HMODULE image, std::wstring_view imagePath,
+    std::wstring_view moduleName, std::wstring_view artifactDirectory = {})
 {
     if (g_installed)
         return true;
@@ -431,8 +461,7 @@ inline bool Install(HMODULE image, std::wstring_view imagePath, std::wstring_vie
     }
     WideCharToMultiByte(CP_UTF8, 0, g_moduleName, -1, g_moduleNameAnsi,
         static_cast<int>(std::size(g_moduleNameAnsi)), nullptr, nullptr);
-    BuildArtifactDirectory();
-    ClearOldArtifacts();
+    BuildArtifactDirectory(artifactDirectory);
 
     ULONG guarantee = 64 * 1024;
     SetThreadStackGuarantee(&guarantee);
@@ -449,9 +478,6 @@ inline bool Install(HMODULE image, std::wstring_view imagePath, std::wstring_vie
     g_previousPureCall = _set_purecall_handler(&PureCall);
     g_previousTerminate = std::set_terminate(&Terminate);
     g_previousAbort = std::signal(SIGABRT, &Signal);
-    g_previousIllegalInstruction = std::signal(SIGILL, &Signal);
-    g_previousFloatingPoint = std::signal(SIGFPE, &Signal);
-    g_previousSegmentation = std::signal(SIGSEGV, &Signal);
     g_symbolsReady = LoadSymbols();
     g_installed = true;
     return true;
@@ -467,9 +493,6 @@ inline void Shutdown()
     _set_purecall_handler(g_previousPureCall);
     std::set_terminate(g_previousTerminate);
     std::signal(SIGABRT, g_previousAbort);
-    std::signal(SIGILL, g_previousIllegalInstruction);
-    std::signal(SIGFPE, g_previousFloatingPoint);
-    std::signal(SIGSEGV, g_previousSegmentation);
     UnpatchUnhandledFilter();
     SetUnhandledExceptionFilter(g_previousFilter);
     g_installed = false;

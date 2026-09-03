@@ -103,6 +103,8 @@ int Launcher::Run(std::stop_token stop, const LogSink& log)
     const DarkFlameConfig config = Config::Load(ownDirectory);
     log(config.antiShadow ? L"[config] Anti-Shadow enabled"
         : L"[config] Anti-Shadow disabled");
+    log(config.scriptsDumper ? L"[config] Scripts Dumper enabled"
+        : L"[config] Scripts Dumper disabled");
     log(config.setSerial ? L"[config] Black Mirror enabled"
         : L"[config] Black Mirror disabled");
     log(config.randomSerial ? L"[config] Random Serial enabled"
@@ -115,8 +117,9 @@ int Launcher::Run(std::stop_token stop, const LogSink& log)
         return 3;
     }
     const auto& payload = ipc.Payload();
+    bool exceptionSupport{};
     bool injected = ManualMap::Map(process.value, agent, &payload,
-        sizeof(payload));
+        sizeof(payload), &exceptionSupport);
     DWORD injectionError = GetLastError();
     if(injected)
     {
@@ -134,6 +137,9 @@ int Launcher::Run(std::stop_token stop, const LogSink& log)
     }
 
     log(L"[ok] DarkFlameAgent.dll manually mapped and ready");
+    log(exceptionSupport
+        ? L"[ok] agent exception support registered without PEB entry"
+        : L"[warn] agent exception support unavailable");
     log(L"[info] waiting for DarkFlameClient.dll mapping...");
     const HANDLE waits[]{ipc.ClientLoadedEvent(), process.value};
     while(!stop.stop_requested())

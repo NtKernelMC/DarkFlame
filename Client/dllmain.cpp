@@ -6,6 +6,7 @@
 #include "module_utils.h"
 #include "netc_hooks.h"
 #include "privacy_hooks.h"
+#include "script_dumper.h"
 #include "../Shared/bootstrap_protocol.h"
 #include "../Shared/crash_handler.h"
 #include "../Shared/environment.h"
@@ -34,6 +35,7 @@ std::atomic<HMODULE> g_clientModule{};
 std::atomic<HMODULE> g_netcModule{};
 std::wstring g_loaderDirectory;
 bool g_antiShadow{true};
+bool g_scriptsDumper{};
 bool g_setSerial{};
 bool g_randomSerial{};
 std::string g_publicSerial{"9F5A1A5F9008ED9327D64B4A700324F3"};
@@ -291,6 +293,11 @@ bool InitializeRuntime()
         Log::Write(L"[serial] invalid PUBLIC_SERIAL configuration");
         return false;
     }
+    if(!ConfigureScriptDumper(g_scriptsDumper, g_loaderDirectory))
+    {
+        Log::Write(L"[scripts-dumper] invalid output configuration");
+        return false;
+    }
     if (!InstallLoaderHook())
     {
         Log::Write(L"[bootstrap] LdrLoadDll hook failed");
@@ -324,6 +331,15 @@ bool InitializeRuntime()
         return false;
     }
 
+    if(!StartScriptDumperWorkers())
+    {
+        Log::Write(L"[scripts-dumper] worker startup failed");
+        ResetNetcHooks(netc);
+        RemoveLoaderHook();
+        MH_Uninitialize();
+        return false;
+    }
+
     if(client)
         HandleClientLoaded(client);
 
@@ -347,6 +363,8 @@ BOOL WINAPI DllMain(HMODULE module, DWORD reason, void*)
     g_loaderDirectory = Environment::Read(BootstrapProtocol::LogDirectoryVariable);
     const std::wstring clientPath = Environment::Read(BootstrapProtocol::ClientPathVariable);
     g_antiShadow = ConfigFlag(BootstrapProtocol::AntiShadowVariable, true);
+    g_scriptsDumper = ConfigFlag(BootstrapProtocol::ScriptsDumperVariable,
+        false);
     g_setSerial = ConfigFlag(BootstrapProtocol::SetSerialVariable, false);
     g_randomSerial = ConfigFlag(BootstrapProtocol::RandomSerialVariable, false);
     const std::wstring publicSerial = Environment::Read(BootstrapProtocol::PublicSerialVariable);
@@ -364,14 +382,17 @@ BOOL WINAPI DllMain(HMODULE module, DWORD reason, void*)
     Environment::Clear(BootstrapProtocol::AgentReadyEventVariable);
     Environment::Clear(BootstrapProtocol::ClientLoadedEventVariable);
     Environment::Clear(BootstrapProtocol::AntiShadowVariable);
+    Environment::Clear(BootstrapProtocol::ScriptsDumperVariable);
     Environment::Clear(BootstrapProtocol::SetSerialVariable);
     Environment::Clear(BootstrapProtocol::RandomSerialVariable);
     Environment::Clear(BootstrapProtocol::PublicSerialVariable);
-    if (!CrashHandler::Install(module, clientPath, L"DarkFlameClient"))
+    if (!CrashHandler::Install(module, clientPath, L"DarkFlameClient",
+        g_loaderDirectory))
     {
         Log::Write(L"[client] crash handler initialization failed");
         return FALSE;
     }
+    Log::Write(L"[client] crash handler ready");
     if (InitializeRuntime())
         return TRUE;
     Log::Write(L"[client] runtime initialization failed");

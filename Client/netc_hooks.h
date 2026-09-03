@@ -12,3 +12,7 @@ bool InitializeNetcClientApi(HMODULE client);
 void ResetNetcClientApi(HMODULE client);
 void SetNetcLuaCallContext(std::string_view resource);
 void ClearNetcLuaCallContext();
+bool ReadLocalPlayerPosition(float& x, float& y, float& z);
+bool SendReliablePlayerPureSync(float x, float y, float z);
+void BeginPlayerPureSyncSuppression();
+void EndPlayerPureSyncSuppression();

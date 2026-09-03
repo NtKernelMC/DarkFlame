@@ -5,6 +5,7 @@
 
 #include <Windows.h>
 
+#include <cstdio>
 #include <string>
 #include <string_view>
 
@@ -32,16 +33,30 @@ inline std::wstring Path()
         + L"\\DarkFlame.log";
 }
 
-inline void Clear()
+inline void BeginSession()
 {
     AcquireSRWLockExclusive(&g_lock);
     g_path = Path();
 
-    const HANDLE file = CreateFileW(g_path.c_str(), GENERIC_WRITE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, CREATE_ALWAYS,
+    const HANDLE file = CreateFileW(g_path.c_str(), FILE_APPEND_DATA,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
         FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file != INVALID_HANDLE_VALUE)
+    {
+        SYSTEMTIME now{};
+        GetLocalTime(&now);
+        char marker[160]{};
+        const int size = sprintf_s(marker,
+            "\r\n[%04u-%02u-%02u %02u:%02u:%02u.%03u] "
+            "========== DarkFlame session P%08lX ==========\r\n",
+            now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute,
+            now.wSecond, now.wMilliseconds, GetCurrentProcessId());
+        DWORD written{};
+        if(size > 0)
+            WriteFile(file, marker, static_cast<DWORD>(size), &written, nullptr);
+        FlushFileBuffers(file);
         CloseHandle(file);
+    }
 
     ReleaseSRWLockExclusive(&g_lock);
 }

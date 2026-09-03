@@ -75,6 +75,7 @@ public:
     virtual void AlignWriteToByteBoundary() const = 0;
     virtual void AlignReadToByteBoundary() const = 0;
     virtual unsigned char* GetData() const = 0;
+    virtual unsigned short Version() const = 0;
 
     bool ReadBit(bool& value)
     {

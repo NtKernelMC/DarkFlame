@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Windows.h>
+#include <TlHelp32.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -14,6 +15,8 @@ namespace Detail
 using LoadLibraryAFn = HMODULE(WINAPI*)(LPCSTR);
 using GetProcAddressFn = FARPROC(WINAPI*)(HMODULE, LPCSTR);
 using DllMainFn = BOOL(WINAPI*)(HMODULE, DWORD, LPVOID);
+using InsertInvertedFunctionTableFn = void(__fastcall*)(void*, ULONG);
+using RemoveInvertedFunctionTableFn = void(__fastcall*)(void*);
 
 struct LoaderData
 {
@@ -23,6 +26,9 @@ struct LoaderData
     IMAGE_IMPORT_DESCRIPTOR* imports;
     LoadLibraryAFn loadLibrary;
     GetProcAddressFn getProcAddress;
+    InsertInvertedFunctionTableFn insertInvertedFunctionTable;
+    RemoveInvertedFunctionTableFn removeInvertedFunctionTable;
+    ULONG imageSize;
     void* reserved;
 };
 
@@ -94,12 +100,20 @@ __declspec(noinline) DWORD WINAPI LoadImage(void* parameter)
         }
     }
 
+    const bool registered = data->insertInvertedFunctionTable
+        && data->removeInvertedFunctionTable && data->imageSize;
+    if (registered)
+        data->insertInvertedFunctionTable(data->image, data->imageSize);
+
     const DWORD entryRva = data->ntHeaders->OptionalHeader.AddressOfEntryPoint;
     if (!entryRva)
         return TRUE;
     const auto entry = reinterpret_cast<DllMainFn>(data->image + entryRva);
-    return entry(reinterpret_cast<HMODULE>(data->image), DLL_PROCESS_ATTACH,
+    const BOOL attached = entry(reinterpret_cast<HMODULE>(data->image), DLL_PROCESS_ATTACH,
         data->reserved);
+    if (!attached && registered)
+        data->removeInvertedFunctionTable(data->image);
+    return attached;
 }
 #pragma code_seg(pop)
 
@@ -141,11 +155,146 @@ inline bool ReadImage(const std::wstring& path, std::vector<BYTE>& bytes)
     SetLastError(error);
     return success;
 }
+
+inline BYTE* FindUniquePattern(HMODULE module, const BYTE* pattern,
+    const char* mask, std::size_t patternSize)
+{
+    if(!module || !pattern || !mask || !patternSize)
+        return nullptr;
+    auto* base = reinterpret_cast<BYTE*>(module);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if(dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0)
+        return nullptr;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS32*>(
+        base + dos->e_lfanew);
+    if(nt->Signature != IMAGE_NT_SIGNATURE)
+        return nullptr;
+
+    BYTE* found{};
+    const IMAGE_SECTION_HEADER* sections = IMAGE_FIRST_SECTION(nt);
+    for(WORD sectionIndex{}; sectionIndex < nt->FileHeader.NumberOfSections;
+        ++sectionIndex)
+    {
+        const auto& section = sections[sectionIndex];
+        if(!(section.Characteristics & IMAGE_SCN_MEM_EXECUTE))
+            continue;
+        const std::size_t size = section.Misc.VirtualSize;
+        if(size < patternSize || section.VirtualAddress > nt->OptionalHeader.SizeOfImage
+            || size > nt->OptionalHeader.SizeOfImage - section.VirtualAddress)
+        {
+            continue;
+        }
+        BYTE* start = base + section.VirtualAddress;
+        for(std::size_t offset{}; offset <= size - patternSize; ++offset)
+        {
+            bool matches = true;
+            for(std::size_t index{}; index < patternSize; ++index)
+            {
+                if(mask[index] == 'x' && start[offset + index] != pattern[index])
+                {
+                    matches = false;
+                    break;
+                }
+            }
+            if(!matches)
+                continue;
+            if(found)
+                return nullptr;
+            found = start + offset;
+        }
+    }
+    return found;
+}
+
+inline BYTE* RemoteModuleBase(HANDLE process, const wchar_t* moduleName)
+{
+    if(!process || !moduleName)
+        return nullptr;
+    const DWORD processId = GetProcessId(process);
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE
+        | TH32CS_SNAPMODULE32, processId);
+    if(snapshot != INVALID_HANDLE_VALUE)
+    {
+        MODULEENTRY32W module{sizeof(module)};
+        if(Module32FirstW(snapshot, &module))
+        {
+            do
+            {
+                if(!_wcsicmp(module.szModule, moduleName))
+                {
+                    CloseHandle(snapshot);
+                    return module.modBaseAddr;
+                }
+            } while(Module32NextW(snapshot, &module));
+        }
+        CloseHandle(snapshot);
+    }
+
+    HMODULE local = GetModuleHandleW(moduleName);
+    IMAGE_DOS_HEADER remoteDos{};
+    SIZE_T read{};
+    if(local && ReadProcessMemory(process, local, &remoteDos,
+        sizeof(remoteDos), &read) && read == sizeof(remoteDos)
+        && remoteDos.e_magic == IMAGE_DOS_SIGNATURE)
+    {
+        const auto* localBase = reinterpret_cast<const BYTE*>(local);
+        const auto* localDos = reinterpret_cast<const IMAGE_DOS_HEADER*>(localBase);
+        const auto* localNt = reinterpret_cast<const IMAGE_NT_HEADERS32*>(
+            localBase + localDos->e_lfanew);
+        IMAGE_NT_HEADERS32 remoteNt{};
+        if(remoteDos.e_lfanew > 0 && ReadProcessMemory(process,
+            reinterpret_cast<const BYTE*>(local) + remoteDos.e_lfanew,
+            &remoteNt, sizeof(remoteNt), &read) && read == sizeof(remoteNt)
+            && remoteNt.Signature == IMAGE_NT_SIGNATURE
+            && localNt->Signature == IMAGE_NT_SIGNATURE
+            && remoteNt.FileHeader.TimeDateStamp == localNt->FileHeader.TimeDateStamp
+            && remoteNt.OptionalHeader.SizeOfImage
+                == localNt->OptionalHeader.SizeOfImage)
+        {
+            return reinterpret_cast<BYTE*>(local);
+        }
+    }
+    return nullptr;
+}
+
+inline void ResolveInvertedFunctionTable(HANDLE process,
+    InsertInvertedFunctionTableFn& insert,
+    RemoveInvertedFunctionTableFn& remove)
+{
+    insert = nullptr;
+    remove = nullptr;
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    BYTE* remoteNtdll = RemoteModuleBase(process, L"ntdll.dll");
+    if(!ntdll || !remoteNtdll)
+        return;
+
+    constexpr BYTE insertPattern[]{0x8B, 0xFF, 0x55, 0x8B, 0xEC, 0x83,
+        0xEC, 0x0C, 0x53, 0x56, 0x57, 0x8D, 0x45, 0xF8, 0x8B, 0xFA,
+        0x50, 0x8D, 0x55, 0xFC, 0x8B, 0xD9, 0xE8};
+    constexpr BYTE removePattern[]{0x8B, 0xFF, 0x56, 0x68, 0, 0, 0, 0,
+        0x8B, 0xF1, 0xE8, 0, 0, 0, 0, 0x8B, 0xD6, 0xE8, 0, 0, 0, 0,
+        0x5E, 0xE9};
+    BYTE* localInsert = FindUniquePattern(ntdll, insertPattern,
+        "xxxxxxxxxxxxxxxxxxxxxxx", sizeof(insertPattern));
+    BYTE* localRemove = FindUniquePattern(ntdll, removePattern,
+        "xxxx????xxx????xxx????xx", sizeof(removePattern));
+    if(!localInsert || !localRemove)
+        return;
+
+    BYTE* localBase = reinterpret_cast<BYTE*>(ntdll);
+    insert = reinterpret_cast<InsertInvertedFunctionTableFn>(remoteNtdll
+        + (localInsert - localBase));
+    remove = reinterpret_cast<RemoveInvertedFunctionTableFn>(remoteNtdll
+        + (localRemove - localBase));
+}
 }
 
 inline bool Map(HANDLE process, const std::wstring& path,
-    const void* parameter = nullptr, SIZE_T parameterSize = 0)
+    const void* parameter = nullptr, SIZE_T parameterSize = 0,
+    bool* exceptionSupport = nullptr)
 {
+    if(exceptionSupport)
+        *exceptionSupport = false;
     if (!process || path.empty() || (!parameter && parameterSize)
         || (parameter && !parameterSize))
     {
@@ -269,7 +418,15 @@ inline bool Map(HANDLE process, const std::wstring& path,
         ? reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(data.image + importDirectory.VirtualAddress) : nullptr;
     data.loadLibrary = &LoadLibraryA;
     data.getProcAddress = &GetProcAddress;
+    Detail::ResolveInvertedFunctionTable(process,
+        data.insertInvertedFunctionTable, data.removeInvertedFunctionTable);
+    data.imageSize = nt->OptionalHeader.SizeOfImage;
     data.reserved = remoteParameter;
+    if(exceptionSupport)
+    {
+        *exceptionSupport = data.insertInvertedFunctionTable
+            && data.removeInvertedFunctionTable;
+    }
 
     const auto loaderStart = reinterpret_cast<const BYTE*>(&Detail::LoadImage);
     const auto loaderEnd = reinterpret_cast<const BYTE*>(&Detail::LoadImageEnd);

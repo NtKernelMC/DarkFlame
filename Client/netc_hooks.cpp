@@ -5,10 +5,12 @@
 #include "logger.h"
 #include "memory_utils.h"
 #include "netc_signatures.h"
+#include "script_dumper.h"
 #include "signature_scanner.h"
 #include "netc_bitstream.h"
 #include "track_cleaner.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -29,6 +31,11 @@ namespace
         short, char);
     using GetElement = void*(__cdecl*)(unsigned int);
     using DiskDriveSerial = bool(__cdecl*)(const char*, const char*, int);
+    using AllocateBitStream = Netc::BitStream*(__thiscall*)(void*);
+    using DeallocateBitStream = void(__thiscall*)(void*, Netc::BitStream*);
+    using NetApiDoPulse = void(__thiscall*)(void*);
+    using RoutePacketToUserHandler = int(__thiscall*)(void*, unsigned char,
+        void*);
 
     SRWLOCK g_installLock = SRWLOCK_INIT;
     SRWLOCK g_clientApiLock = SRWLOCK_INIT;
@@ -37,12 +44,15 @@ namespace
     RakPeerSend g_rakPeerSend{};
     GetElement g_getElement{};
     DiskDriveSerial g_diskDriveSerial{};
+    NetApiDoPulse g_netApiDoPulse{};
+    RoutePacketToUserHandler g_routePacketToUserHandler{};
     HMODULE g_netcModule{};
     HMODULE g_clientApiModule{};
     bool g_installed{};
     bool g_serialInstalled{};
     bool g_randomSerialInstalled{};
     bool g_randomSerialUnavailable{};
+    bool g_scriptDumperInstalled{};
     std::atomic_bool g_setSerial{};
     std::atomic_bool g_randomSerial{};
     std::atomic_bool g_randomSerialSpent{};
@@ -52,6 +62,8 @@ namespace
     std::array<char, 64> g_randomDriveSerial{};
     std::array<char, 64> g_randomDriveModel{};
     std::atomic_uint g_decodeFailures{};
+    std::atomic<void*> g_netInstance{};
+    std::atomic_uint32_t g_playerPureSyncSuppression{};
 
     std::mt19937 RandomEngine()
     {
@@ -110,6 +122,12 @@ namespace
     LuaContext g_luaContexts[8]{};
 
     constexpr unsigned char LuaEventPacket = 81;
+    constexpr unsigned char PlayerPureSyncPacket = 32;
+    constexpr int PacketPriorityHigh = 0;
+    constexpr int PacketReliabilityReliableOrdered = 3;
+    constexpr int PacketOrderingDefault = 0;
+    constexpr std::size_t AllocateBitStreamVtableIndex = 8;
+    constexpr std::size_t DeallocateBitStreamVtableIndex = 9;
     constexpr std::string_view GetElementPattern =
         "55 8B EC 8B 45 ? 3D ? ? ? ? 73 ? 8B 04 85";
     constexpr unsigned int MaxArguments = 512;
@@ -465,17 +483,139 @@ namespace
     int __cdecl HookSendLogger(int, void*, int, int, void*) { return 0; }
     int __fastcall HookSetClientKick(void*, void*, void*, void*, char, int) { return 0; }
     void __fastcall HookVfB00Z00Scanner(void*, void*, int) {}
+    char __fastcall HookNetworkPacketMonitoringSystem(void*, void*, char) { return 0; }
     int __fastcall HookSetClientKickNew(void*, void*, char) { return 0; }
     int __fastcall HookScanModuleIntegrity(void*, void*, DWORD*) { return 0; }
+
+    void __fastcall HookNetApiDoPulse(void* self, void*)
+    {
+        const NetApiDoPulse original = g_netApiDoPulse;
+        if(original
+            && g_playerPureSyncSuppression.load(std::memory_order_acquire) == 0)
+        {
+            original(self);
+        }
+    }
 
     bool __fastcall HookSendPacket(void* self, void*, unsigned char packetId,
         void* bitStream, int priority, int reliability, int ordering)
     {
+        g_netInstance.store(self, std::memory_order_release);
         ObservePacket(packetId, bitStream);
         const bool blocked = packetId == 34 || packetId == 91
             || packetId == 92 || packetId == 94;
         return blocked || g_sendPacket(self, packetId, bitStream,
             priority, reliability, ordering);
+    }
+
+    int __fastcall HookRoutePacketToUserHandler(void* self, void*,
+        unsigned char packetId, void* bitStream)
+    {
+        const RoutePacketToUserHandler original = g_routePacketToUserHandler;
+        if(!original)
+            return 0;
+        try
+        {
+            ObserveIncomingResourcePacket(packetId,
+                static_cast<Netc::BitStream*>(bitStream));
+        }
+        catch(...)
+        {
+        }
+        return original(self, packetId, bitStream);
+    }
+
+    int RoundSync(float value)
+    {
+        return static_cast<int>(std::floor(value + 0.5f));
+    }
+
+    void WriteMappedFloat(Netc::BitStream& stream, float value,
+        unsigned int bits, float minimum, float maximum,
+        bool preserveGreaterThanMinimum = false)
+    {
+        value = std::clamp(value, minimum, maximum);
+        const float alpha = (value - minimum) / (maximum - minimum);
+        const unsigned int maximumBits = (1u << bits) - 1;
+        unsigned int encoded = static_cast<unsigned int>(
+            RoundSync(static_cast<float>(maximumBits) * alpha));
+        if(preserveGreaterThanMinimum && !encoded && alpha > 0.0f)
+            encoded = 1;
+        stream.WriteBits(reinterpret_cast<const char*>(&encoded), bits);
+    }
+
+    void WriteFixedPositionAxis(Netc::BitStream& stream, float value)
+    {
+        value = std::clamp(value, -8192.0f, 8191.0f);
+        const int encoded = RoundSync(value * 1024.0f);
+        stream.WriteBits(reinterpret_cast<const char*>(&encoded), 24);
+    }
+
+    bool ReadLocalPlayerState(float* position, float& health, float& armor)
+    {
+        __try
+        {
+            const std::uintptr_t ped = *reinterpret_cast<const std::uint32_t*>(
+                0x00B6F5F0u);
+            if(!ped)
+                return false;
+            if(position)
+            {
+                position[0] = *reinterpret_cast<const float*>(ped + 0x4);
+                position[1] = *reinterpret_cast<const float*>(ped + 0x8);
+                position[2] = *reinterpret_cast<const float*>(ped + 0xC);
+            }
+            health = *reinterpret_cast<const float*>(ped + 0x540);
+            armor = *reinterpret_cast<const float*>(ped + 0x548);
+            return (!position || (std::isfinite(position[0])
+                && std::isfinite(position[1]) && std::isfinite(position[2])))
+                && std::isfinite(health) && std::isfinite(armor);
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool WritePlayerPureSync(Netc::BitStream& stream, float x, float y,
+        float z, float health, float armor)
+    {
+        const unsigned char zeroByte{};
+        const char zeroAxis{};
+        stream.Write(zeroByte);
+        stream.WriteBits(reinterpret_cast<const char*>(&zeroByte), 8);
+        if(stream.Version() >= 0x06F)
+        {
+            stream.WriteBit(false);
+            stream.WriteBit(false);
+        }
+        stream.Write(zeroAxis);
+        stream.Write(zeroAxis);
+
+        const unsigned short flags = 1u << 10;
+        stream.WriteBits(reinterpret_cast<const char*>(&flags), 12);
+        if(stream.Version() >= 0x08A)
+            stream.WriteBit(false);
+        WriteFixedPositionAxis(stream, x);
+        WriteFixedPositionAxis(stream, y);
+        z = std::clamp(z, -99999.0f, 99999.0f);
+        stream.Write(z);
+        WriteMappedFloat(stream, 0.0f, 16, -3.14159265f, 3.14159265f);
+        stream.WriteBit(false);
+        WriteMappedFloat(stream, health, 8, 0.0f, 255.0f, true);
+        WriteMappedFloat(stream, armor, 8, 0.0f, 127.5f, true);
+        WriteMappedFloat(stream, 0.0f, 12, -3.14159265f, 3.14159265f);
+
+        WriteMappedFloat(stream, 0.0f, 8, -3.14159265f, 3.14159265f);
+        WriteMappedFloat(stream, 0.0f, 8, -3.14159265f, 3.14159265f);
+        stream.WriteBit(false);
+        unsigned int cameraRange{};
+        stream.WriteBits(reinterpret_cast<const char*>(&cameraRange), 2);
+        WriteMappedFloat(stream, 0.0f, 3, -4.0f, 4.0f);
+        WriteMappedFloat(stream, 0.0f, 3, -4.0f, 4.0f);
+        WriteMappedFloat(stream, 0.0f, 3, -4.0f, 4.0f);
+        stream.WriteBit(false);
+        return true;
     }
 
     struct RakBitStreamView
@@ -545,7 +685,7 @@ namespace
         return result;
     }
 
-    std::array<HookUtils::Hook, 11>& Hooks()
+    std::array<HookUtils::Hook, 12>& Hooks()
     {
         static std::array hooks{
             HookUtils::Hook{L"AC__IsVpnEnabled", NetcSignatures::VpnBypass,
@@ -565,6 +705,9 @@ namespace
                 reinterpret_cast<void*>(&HookSetClientKick)},
             HookUtils::Hook{L"AC__VfB00_Z00Scanner", NetcSignatures::VfB00Z00Scanner,
                 reinterpret_cast<void*>(&HookVfB00Z00Scanner)},
+            HookUtils::Hook{L"AC_NetworkPacketMonitoringSystem",
+                NetcSignatures::NetworkPacketMonitoringSystem,
+                reinterpret_cast<void*>(&HookNetworkPacketMonitoringSystem)},
             HookUtils::Hook{L"AC__SetClientKickNew", NetcSignatures::SetClientKickNew,
                 reinterpret_cast<void*>(&HookSetClientKickNew)},
             HookUtils::Hook{L"AC_HandleSelfFileIntegrityResultPacket",
@@ -596,6 +739,109 @@ namespace
                 reinterpret_cast<void**>(&g_diskDriveSerial)}
         };
         return hooks;
+    }
+
+    std::array<HookUtils::Hook, 1>& ScriptDumperHooks()
+    {
+        static std::array hooks{
+            HookUtils::Hook{L"CNet__RoutePacketToUserHandler",
+                NetcSignatures::RoutePacketToUserHandler,
+                reinterpret_cast<void*>(&HookRoutePacketToUserHandler),
+                reinterpret_cast<void**>(&g_routePacketToUserHandler)}
+        };
+        return hooks;
+    }
+
+    std::array<HookUtils::Hook, 1>& ClientSyncHooks()
+    {
+        static std::array hooks{
+            HookUtils::Hook{L"CNetAPI::DoPulse",
+                NetcSignatures::ClientNetApiDoPulse,
+                reinterpret_cast<void*>(&HookNetApiDoPulse),
+                reinterpret_cast<void**>(&g_netApiDoPulse)}
+        };
+        return hooks;
+    }
+}
+
+bool ReadLocalPlayerPosition(float& x, float& y, float& z)
+{
+    float position[3]{};
+    float health{};
+    float armor{};
+    if(!ReadLocalPlayerState(position, health, armor))
+        return false;
+    x = position[0];
+    y = position[1];
+    z = position[2];
+    return true;
+}
+
+bool SendReliablePlayerPureSync(float x, float y, float z)
+{
+    if(!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+    {
+        Log::Write(L"[sync-event] PureSync rejected: non-finite position");
+        return false;
+    }
+    void* net = g_netInstance.load(std::memory_order_acquire);
+    if(!net || !g_sendPacket)
+    {
+        Log::Write(L"[sync-event] PureSync rejected: CNet is unavailable");
+        return false;
+    }
+    void** vtable{};
+    AllocateBitStream allocate{};
+    DeallocateBitStream deallocate{};
+    if(!ReadValue(net, 0, vtable) || !vtable
+        || !ReadValue(vtable, AllocateBitStreamVtableIndex * sizeof(void*),
+            allocate)
+        || !ReadValue(vtable, DeallocateBitStreamVtableIndex * sizeof(void*),
+            deallocate)
+        || !allocate || !deallocate)
+    {
+        Log::Write(L"[sync-event] PureSync rejected: CNet bitstream ABI "
+            L"is unavailable");
+        return false;
+    }
+
+    float health{};
+    float armor{};
+    if(!ReadLocalPlayerState(nullptr, health, armor))
+    {
+        Log::Write(L"[sync-event] PureSync rejected: local ped state "
+            L"is unavailable");
+        return false;
+    }
+    Netc::BitStream* stream = allocate(net);
+    if(!stream)
+    {
+        Log::Write(L"[sync-event] PureSync rejected: bitstream allocation "
+            L"failed");
+        return false;
+    }
+    WritePlayerPureSync(*stream, x, y, z, health, armor);
+    const bool result = g_sendPacket(net, PlayerPureSyncPacket, stream,
+        PacketPriorityHigh, PacketReliabilityReliableOrdered,
+        PacketOrderingDefault);
+    deallocate(net, stream);
+    if(!result)
+        Log::Write(L"[sync-event] PureSync rejected by CNet::SendPacket");
+    return result;
+}
+
+void BeginPlayerPureSyncSuppression()
+{
+    g_playerPureSyncSuppression.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void EndPlayerPureSyncSuppression()
+{
+    std::uint32_t depth = g_playerPureSyncSuppression.load(
+        std::memory_order_acquire);
+    while(depth && !g_playerPureSyncSuppression.compare_exchange_weak(depth,
+        depth - 1, std::memory_order_acq_rel, std::memory_order_acquire))
+    {
     }
 }
 
@@ -633,21 +879,41 @@ bool ConfigureNetcHooks(bool setSerial, bool randomSerial,
 
 bool InitializeNetcClientApi(HMODULE client)
 {
-    if(g_getElement && g_clientApiModule == client)
-        return true;
     AcquireSRWLockExclusive(&g_clientApiLock);
     if(g_getElement && g_clientApiModule == client)
     {
+        const bool ready = HookUtils::Repair(ClientSyncHooks());
         ReleaseSRWLockExclusive(&g_clientApiLock);
-        return true;
+        return ready;
     }
-    const std::uintptr_t address = SignatureScanner(client).Find(GetElementPattern);
+
+    HookUtils::Remove(ClientSyncHooks());
+    g_netApiDoPulse = nullptr;
+    g_getElement = nullptr;
+    g_clientApiModule = nullptr;
+    if(!client)
+    {
+        ReleaseSRWLockExclusive(&g_clientApiLock);
+        return false;
+    }
+
+    const SignatureScanner scanner(client);
+    const std::uintptr_t address = scanner.Find(GetElementPattern);
     g_getElement = reinterpret_cast<GetElement>(address);
-    g_clientApiModule = address ? client : nullptr;
     Log::Scan(L"CElementIDs::GetElement", address ? L"found" : L"not_found",
         address);
+    const bool hookInstalled = address
+        && HookUtils::Install(scanner, ClientSyncHooks());
+    if(hookInstalled)
+        g_clientApiModule = client;
+    else
+    {
+        HookUtils::Remove(ClientSyncHooks());
+        g_netApiDoPulse = nullptr;
+        g_getElement = nullptr;
+    }
     ReleaseSRWLockExclusive(&g_clientApiLock);
-    return g_getElement != nullptr;
+    return hookInstalled;
 }
 
 void SetNetcLuaCallContext(std::string_view resource)
@@ -711,7 +977,10 @@ bool InstallNetcHooks(HMODULE netc)
                 || g_randomSerialSpent.load(std::memory_order_acquire)
                 || g_randomSerialUnavailable
                 || (g_randomSerialInstalled && HookUtils::Repair(RandomSerialHooks()));
-            if(coreReady && serialReady && randomReady)
+            const bool dumperReady = !IsScriptDumperEnabled()
+                || (g_scriptDumperInstalled
+                    && HookUtils::Repair(ScriptDumperHooks()));
+            if(coreReady && serialReady && randomReady && dumperReady)
             {
                 ReleaseSRWLockExclusive(&g_installLock);
                 return true;
@@ -720,14 +989,19 @@ bool InstallNetcHooks(HMODULE netc)
         HookUtils::Remove(Hooks());
         HookUtils::Remove(SerialHooks());
         HookUtils::Remove(RandomSerialHooks());
+        HookUtils::Remove(ScriptDumperHooks());
         g_installed = false;
         g_serialInstalled = false;
         g_randomSerialInstalled = false;
         g_randomSerialUnavailable = false;
+        g_scriptDumperInstalled = false;
         g_netcModule = nullptr;
         g_sendPacket = nullptr;
+        g_netInstance.store(nullptr, std::memory_order_release);
+        g_playerPureSyncSuppression.store(0, std::memory_order_release);
         g_rakPeerSend = nullptr;
         g_diskDriveSerial = nullptr;
+        g_routePacketToUserHandler = nullptr;
     }
     if (!netc)
     {
@@ -739,14 +1013,27 @@ bool InstallNetcHooks(HMODULE netc)
     g_serialInstalled = false;
     g_randomSerialUnavailable = false;
     g_installed = HookUtils::Install(scanner, Hooks());
+    if(g_installed && IsScriptDumperEnabled())
+    {
+        g_scriptDumperInstalled = HookUtils::Install(scanner,
+            ScriptDumperHooks());
+        if(!g_scriptDumperInstalled)
+        {
+            HookUtils::Remove(ScriptDumperHooks());
+            HookUtils::Remove(Hooks());
+            g_installed = false;
+        }
+    }
     if(g_installed && g_setSerial.load(std::memory_order_acquire))
     {
         g_serialInstalled = HookUtils::Install(scanner, SerialHooks());
         if(!g_serialInstalled)
         {
             HookUtils::Remove(SerialHooks());
+            HookUtils::Remove(ScriptDumperHooks());
             HookUtils::Remove(Hooks());
             g_installed = false;
+            g_scriptDumperInstalled = false;
         }
     }
     if(g_installed && g_randomSerial.load(std::memory_order_acquire)
@@ -763,8 +1050,11 @@ bool InstallNetcHooks(HMODULE netc)
     if (!g_installed)
     {
         g_sendPacket = nullptr;
+        g_netInstance.store(nullptr, std::memory_order_release);
+        g_playerPureSyncSuppression.store(0, std::memory_order_release);
         g_rakPeerSend = nullptr;
         g_diskDriveSerial = nullptr;
+        g_routePacketToUserHandler = nullptr;
     }
     else
         g_netcModule = netc;
@@ -780,14 +1070,19 @@ void ResetNetcHooks(HMODULE netc)
         HookUtils::Remove(Hooks());
         HookUtils::Remove(SerialHooks());
         HookUtils::Remove(RandomSerialHooks());
+        HookUtils::Remove(ScriptDumperHooks());
         g_installed = false;
         g_serialInstalled = false;
         g_randomSerialInstalled = false;
         g_randomSerialUnavailable = false;
+        g_scriptDumperInstalled = false;
         g_netcModule = nullptr;
         g_sendPacket = nullptr;
+        g_netInstance.store(nullptr, std::memory_order_release);
+        g_playerPureSyncSuppression.store(0, std::memory_order_release);
         g_rakPeerSend = nullptr;
         g_diskDriveSerial = nullptr;
+        g_routePacketToUserHandler = nullptr;
     }
     ReleaseSRWLockExclusive(&g_installLock);
 }
@@ -797,6 +1092,8 @@ void ResetNetcClientApi(HMODULE client)
     AcquireSRWLockExclusive(&g_clientApiLock);
     if(!client || client == g_clientApiModule)
     {
+        HookUtils::Remove(ClientSyncHooks());
+        g_netApiDoPulse = nullptr;
         g_getElement = nullptr;
         g_clientApiModule = nullptr;
     }

@@ -1,7 +1,6 @@
 local api = {
     triggerEvent = dfTriggerEvent,
     alert = dfPlayAlertSignal,
-    key = dfEmulateKey,
     mouse = dfEmulateMouseButton,
     alertMonitor = dfSetAlertMonitorEnabled,
     takeCommand = dfJbkTakeCommand,
@@ -23,37 +22,30 @@ local ADMINHIT
 local startWalk = function() end
 local stopWalk = function() end
 
-local CONTROL_KEYS = {
-    forwards = "w",
-    sprint = "lshift",
-    left = "a",
-    right = "d",
-    jump = "space",
+local BOT_CONTROLS = {
+    forwards = true,
+    sprint = true,
+    left = true,
+    right = true,
+    jump = true,
+    fire = true,
 }
 local controlStates = {}
 
 local function setBotControl(control, pressed)
     pressed = pressed and true or false
     if controlStates[control] == pressed then return true end
-    local result
-    if control == "fire" then
-        result = api.mouse("left", pressed)
-    elseif CONTROL_KEYS[control] then
-        result = api.key(CONTROL_KEYS[control], pressed)
-    else
-        return false
-    end
+    if not BOT_CONTROLS[control] then return false end
+    local result = setPedControlState(localPlayer, control, pressed)
     if result then controlStates[control] = pressed end
     return result
 end
 
 local function releaseBotControls()
-    for control, key in pairs(CONTROL_KEYS) do
-        api.key(key, false)
+    for control in pairs(BOT_CONTROLS) do
+        setPedControlState(localPlayer, control, false)
         controlStates[control] = false
     end
-    api.mouse("left", false)
-    controlStates.fire = false
 end
 
 local Settings = {
