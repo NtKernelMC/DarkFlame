@@ -72,9 +72,9 @@ class BackgroundTests(unittest.TestCase):
         self.assertEqual(self.lua.globals().ui['autopilot'], '1')
         self.assertTrue(self.records('autopilot_timing_resync')[-1]['data']['restored'])
         self.assertFalse(self.records('sample')[-1]['data']['window_minimized'])
-        self.run_lua('frame(500)')
+        self.run_lua('frame(5001)')
         self.assertEqual(self.lua.globals().ui['autopilot'], '0')
-        self.assertIn('300', self.records('autopilot_stop')[-1]['data']['reason'])
+        self.assertIn('5 с', self.records('autopilot_stop')[-1]['data']['reason'])
         self.assert_released()
 
     def test_frozen_unloading_stays_armed_and_resumes_reverse_in_background(self):

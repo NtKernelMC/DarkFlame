@@ -3,7 +3,7 @@ local PilotController = (function()
 -- Pure controller: no game APIs, resource loading or server events.
 local Controller = {}
 Controller.__index = Controller
-Controller.version = "0.1.11"
+Controller.version = "0.1.12"
 
 local function finite(v) return type(v) == "number" and v == v and math.abs(v) < math.huge end
 local function clamp(v, low, high) return math.max(low, math.min(high, v)) end
@@ -75,6 +75,7 @@ function Controller:start(data, now)
     end
     self.enabled, self.vehicle, self.world = true, data.vehicle, tostring(data.dimension) .. ":" .. tostring(data.interior)
     self.lastTick, self.started, self.navPosition, self.navId = now, now, nil, nil
+    self.controlReady = false
     self.groundSince, self.airSince, self.missingSince = nil, nil, nil
     self.airborne = data.on_ground == false and finite(data.agl_terrain_m) and data.agl_terrain_m > 3
     self.flightSeen = self.airborne or false
@@ -263,8 +264,19 @@ function Controller:update(data, now, pathClear, probeStatus)
     self.lastTick = now
     if dt <= 0 then return self.output end
     local frameGap = dt
-    local resync = dt > 0.3 and data and (data.window_minimized == true or data.window_restored == true)
-    if dt > 0.3 and not resync then return self:stop("Пауза кадров больше 300 мс") end
+    local resyncReason
+    if dt > 0.3 and data then
+        if data.window_minimized == true then resyncReason = "background"
+        elseif data.window_restored == true then resyncReason = "restore"
+        elseif self.controlReady and dt <= 5 then resyncReason = "short_stall" end
+    end
+    local resync = resyncReason ~= nil
+    self.detail = self.detail or {}
+    self.detail.frame_gap_ms, self.detail.timing_resynced = frameGap * 1000, false
+    self.detail.timing_resync_reason = nil
+    if dt > 0.3 and not resync then
+        return self:stop(self.controlReady and "Пауза кадров больше 5 с" or "Пауза кадров больше 300 мс при запуске")
+    end
     if not data or data.vehicle ~= self.vehicle or data.driver ~= true then return self:stop("Потеря самолёта / места пилота") end
     if tostring(data.dimension) .. ":" .. tostring(data.interior) ~= self.world then return self:stop("Смена мира") end
     for _, name in ipairs({"heading_deg", "pitch_deg", "roll_deg", "speed_kmh", "climb_mps"}) do
@@ -282,6 +294,7 @@ function Controller:update(data, now, pathClear, probeStatus)
         if math.sqrt(d) > math.max(30, data.speed_kmh / 3.6 * frameGap * 4) then return self:stop("Скачок позиции самолёта") end
     end
     self.lastPosition = data.position_m
+    self.controlReady = true
     if data.on_ground then
         self.groundSince, self.airSince = self.groundSince or now, nil
         if elapsed(now, self.groundSince) >= 300 then self.airborne = false end
@@ -301,6 +314,7 @@ function Controller:update(data, now, pathClear, probeStatus)
         or not finite(nav.altitude_error_m) or not vector(nav.position)) then nav = nil end
     self.detail = {waypoint = self.waypoint, instruction = self.instruction, path_clear = pathClear, probe_status = probeStatus}
     self.detail.frame_gap_ms, self.detail.timing_resynced = frameGap * 1000, resync or false
+    self.detail.timing_resync_reason = resyncReason
     if not self.airborne and data.frozen == true then
         self.phase = self.instruction == "passengers" and "passengers" or self.instruction == "wait_clearance" and "wait_clearance" or "frozen_wait"
         self.status = self.instruction == "passengers" and "Ожидание пассажиров" or "Самолёт удерживается работой"
@@ -713,7 +727,7 @@ end)()
 -- END EMBEDDED PILOT CONTROLLER
 
 -- Flight recorder and opt-in local-player controller. Navigation uses live elements.
-local VERSION = "1.2.15"
+local VERSION = "1.2.16"
 local native = {log = dfPilotLog, update = dfPilotUpdate, command = dfPilotTakeCommand,
     alert = dfPlayAlertSignal, alertMonitor = dfSetAlertMonitorEnabled}
 for _, name in ipairs({"log", "update", "command", "alert", "alertMonitor"}) do
@@ -969,8 +983,10 @@ local function safetyAlert(key, cooldown, text, data)
     if state.safetyAlerts[key] and elapsed(now, state.safetyAlerts[key]) < cooldown then return false end
     state.safetyAlerts[key] = now
     local played = native.alert() == true
+    local playCallMs = elapsed(getTickCount(), now)
     if text then outputChatBox("#FF5555[Pilot Safety] #FFFFFF" .. text, 255, 255, 255, true) end
-    emit("safety_alert", {kind = key, text = text or NULL, played = played, context = data or NULL}, true)
+    emit("safety_alert", {kind = key, text = text or NULL, played = played, context = data or NULL,
+        play_call_ms = playCallMs, handler_ms = elapsed(getTickCount(), now)}, true)
     return played
 end
 
@@ -1057,7 +1073,7 @@ local function scanSafetyPlayers(now)
             local x, y, z = read("getElementPosition", player)
             if finite(x) and finite(y) and finite(z) then
                 local distance = math.sqrt((x - px)^2 + (y - py)^2 + (z - pz)^2)
-                if distance <= 200 then
+                if distance <= 50 then
                     current[player] = true
                     if not state.safetyNearby[player] and (not nearestDistance or distance < nearestDistance) then
                         nearest, nearestDistance = player, distance
@@ -1975,7 +1991,8 @@ updateAutopilot = function(item, now)
     state.windowRestored = false
     if autopilot.detail and autopilot.detail.timing_resynced then
         emit("autopilot_timing_resync", {frame_gap_ms = autopilot.detail.frame_gap_ms,
-            minimized = item.window_minimized, restored = item.window_restored}, true)
+            minimized = item.window_minimized, restored = item.window_restored,
+            reason = autopilot.detail.timing_resync_reason}, true)
     end
     if not autopilot.enabled then stopAutopilot(autopilot.status)
     elseif oldPhase ~= autopilot.phase or oldWaypoint ~= autopilot.waypoint then
@@ -2129,6 +2146,7 @@ local function onFrame(frameMs, background)
     now = getTickCount()
     syncSafetyMonitor()
     if safetyActive() and elapsed(now, state.lastSafetyScan) >= 2000 then scanSafetyPlayers(now) end
+    now = getTickCount()
     local input
     if state.recording then
         input = inputSnapshot()

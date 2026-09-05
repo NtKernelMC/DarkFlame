@@ -34,8 +34,9 @@ local controlStates = {}
 
 local function setBotControl(control, pressed)
     pressed = pressed and true or false
-    if controlStates[control] == pressed then return true end
     if not BOT_CONTROLS[control] then return false end
+    -- Reassert held controls after the game clears input on focus changes.
+    if not pressed and controlStates[control] == false then return true end
     local result = setPedControlState(localPlayer, control, pressed)
     if result then controlStates[control] = pressed end
     return result

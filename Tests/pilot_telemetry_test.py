@@ -47,7 +47,11 @@ end
 function dfPilotTakeCommand(lease)
     if lease==tostring(collectorGeneration) then return table.remove(commands,1) end
 end
-function dfPlayAlertSignal() alertCalls=alertCalls+1; return true end
+function dfPlayAlertSignal()
+    alertCalls=alertCalls+1
+    now=(now+(alertDelayMs or 0))%4294967296
+    return true
+end
 function dfSetAlertMonitorEnabled(enabled) alertMonitorCalls[#alertMonitorCalls+1]=enabled; return true end
 function getTickCount() return now end
 function getRealTime() return {timestamp=1700000000} end

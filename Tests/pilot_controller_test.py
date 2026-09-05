@@ -177,7 +177,7 @@ class MathTests(unittest.TestCase):
         self.start(d)
         self.update(d)
         self.assertTrue(self.c.enabled)
-        self.update(d, ms=400)
+        self.update(d, ms=5001)
         self.assertFalse(self.c.enabled)
         self.setUp()
         d = observation(navigation={'position': []})
@@ -541,7 +541,7 @@ class AdapterTests(unittest.TestCase):
         self.assert_released()
 
     def test_vehicle_loss_cleanup_and_frame_gap_release(self):
-        for failure in ('occupied=nil; step(6)', '__DarkFlamePilotCleanup()', 'frame(400)'):
+        for failure in ('occupied=nil; step(6)', '__DarkFlamePilotCleanup()', 'frame(5001)'):
             self.setUp()
             self.arm()
             self.run_lua(failure)

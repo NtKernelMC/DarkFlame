@@ -77,7 +77,7 @@ class AutonomyTests(unittest.TestCase):
         for trigger in ("event('onClientKey',root,'q',true)",
                         "event('province:sendNotification',pilotRoot,'Вы уволены')",
                         "commands[#commands+1]='autopilot_stop'; step(6)",
-                        "frame(500)"):
+                        "frame(5001)"):
             with self.subTest(trigger=trigger):
                 self.setUp(); self.arm(False)
                 self.run_lua(trigger)
