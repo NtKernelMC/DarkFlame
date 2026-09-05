@@ -86,12 +86,18 @@ DWORD WINAPI PlayPilotSounds(void*)
             MCI_PLAY_PARMS play{};
             error = mciSendCommandW(device, MCI_PLAY, MCI_FROM, reinterpret_cast<DWORD_PTR>(&play));
         }
+        std::string message;
+        if(error)
+        {
+            const int bytes = WideCharToMultiByte(CP_UTF8, 0, path.data(), static_cast<int>(path.size()), nullptr, 0, nullptr, nullptr);
+            std::string utf8(bytes, '\0');
+            WideCharToMultiByte(CP_UTF8, 0, path.data(), static_cast<int>(path.size()), utf8.data(), bytes, nullptr, nullptr);
+            message = error == MCIERR_FILE_NOT_FOUND ? "Не найден или недоступен звуковой файл: " : "Не удалось воспроизвести: ";
+            message += utf8 + " (MCI " + std::to_string(error) + ")";
+        }
         {
             std::scoped_lock lock(g_mutex);
-            if(lease == g_lease)
-                g_state["autopilot_sound_error"] = error ? "Не удалось воспроизвести "
-                    + std::string(cue == 1 ? "AutoPilotON.mp3" : "AirbusOff.mp3")
-                    + " (MCI " + std::to_string(error) + ")" : "";
+            if(lease == g_lease) g_state["autopilot_sound_error"] = std::move(message);
         }
     }
 }

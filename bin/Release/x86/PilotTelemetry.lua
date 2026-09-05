@@ -3,7 +3,7 @@ local PilotController = (function()
 -- Pure controller: no game APIs, resource loading or server events.
 local Controller = {}
 Controller.__index = Controller
-Controller.version = "0.1.9"
+Controller.version = "0.1.10"
 
 local function finite(v) return type(v) == "number" and v == v and math.abs(v) < math.huge end
 local function clamp(v, low, high) return math.max(low, math.min(high, v)) end
@@ -51,6 +51,7 @@ function Controller:notify(text, now)
         self.pushbackPending = self.enabled and self.instruction == "reverse" and mode == "taxi" or false
         self.pushbackNoticeTick, self.pushback = now or self.lastTick, false
         self.parkingHold = nil
+        self.taxiTarget, self.taxiReentry = nil, nil
         self.instruction = mode
         if mode == "takeoff" or mode == "reverse" or mode == "boarding_move" then
             self.finalLanding, self.landingHeading = false, nil
@@ -84,6 +85,7 @@ function Controller:start(data, now)
     self.groundDirection = forward < -0.25 and -1 or forward > 0.25 and 1 or self.instruction == "reverse" and -1 or 1
     self.directionSettled, self.pushbackPending, self.pushback = nil, false, false
     self.parkingHold = nil
+    self.taxiTarget, self.taxiReentry = nil, nil
     self.turnDirection, self.ringPass = nil, nil
     self.groundSteerReleased = nil
     self.finalLanding, self.landingHeading = false, nil
@@ -102,6 +104,88 @@ local function stopMotion(out, data)
     out.handbrake = data.speed_kmh < 3
 end
 
+function Controller:taxiReentryIntent(data, now)
+    local nav = data.navigation
+    local color = type(nav) == "table" and nav.color_rgba or {}
+    if data.on_ground ~= true or self.airborne or type(nav) ~= "table" or nav.marker_type ~= "checkpoint"
+        or not finite(color[1]) or not finite(color[2]) or not finite(color[3])
+        or color[1] < 200 or color[2] > 80 or color[3] > 80 then
+        self.taxiTarget, self.taxiReentry = nil, nil
+        return
+    end
+    local size = nav.marker_size_m
+    if not finite(size) or size <= 0 or not vector(nav.position) or not vector(data.position_m) then return end
+    local target = self.taxiTarget
+    local changed = not target or target.id ~= nav.id or target.size ~= size
+    if not changed then
+        for i = 1, 3 do if math.abs(target.position[i] - nav.position[i]) > 0.25 then changed = true end end
+    end
+    if changed then
+        target = {id = nav.id, position = {nav.position[1], nav.position[2], nav.position[3]}, size = size}
+        self.taxiTarget, self.taxiReentry = target, nil
+    end
+    local recovery = self.taxiReentry
+    if not recovery and nav.marker_inside == true then
+        recovery = {stage = "wait", since = now, reason = changed and "target_appeared_inside" or "entry_not_acknowledged"}
+        self.taxiReentry = recovery
+    end
+    if not recovery then return end
+    if recovery.stage == "wait" and elapsed(now, recovery.since) >= 1000 then
+        if nav.marker_inside ~= true then recovery.failure = "Нет подтверждения наземной метки после выхода"
+        elseif size > 60 then recovery.failure = "Слишком большая метка для повторного захода"
+        else
+            local heading = math.rad(data.heading_deg)
+            local fx, fy = math.sin(heading), math.cos(heading)
+            local dx, dy = nav.position[1] - data.position_m[1], nav.position[2] - data.position_m[2]
+            local along, cross = dx * fx + dy * fy, dx * fy - dy * fx
+            local radius = size + 2
+            local half = math.sqrt(math.max(0, radius * radius - cross * cross))
+            local direction = along < 0 and 1 or -1
+            if math.abs(along) < 0.5 then direction = self.groundDirection or 1 end
+            recovery.stage, recovery.since = "exit", now
+            recovery.origin, recovery.heading = {data.position_m[1], data.position_m[2]}, data.heading_deg
+            recovery.fx, recovery.fy, recovery.direction = fx, fy, direction
+            recovery.exitDistance, recovery.bestProgress, recovery.progressTick = half + direction * along, 0, now
+            recovery.radius, recovery.size = radius, size
+        end
+    end
+    local direction, steering, speed = self.groundDirection or 1, 0, 0
+    if recovery.origin then
+        local dx, dy = data.position_m[1] - recovery.origin[1], data.position_m[2] - recovery.origin[2]
+        local along = dx * recovery.fx + dy * recovery.fy
+        local cross = dx * recovery.fy - dy * recovery.fx
+        local progress = along * recovery.direction
+        local remaining = recovery.exitDistance - progress
+        recovery.progress, recovery.cross, recovery.remaining = progress, cross, remaining
+        if recovery.stage == "exit" and remaining <= 0.35 and nav.marker_inside == false then
+            recovery.stage, recovery.since = "return", now
+            recovery.returnFrom, recovery.bestProgress, recovery.progressTick = progress, 0, now
+        elseif recovery.stage == "return" and nav.marker_inside == true then
+            recovery.stage, recovery.since = "ack", now
+        end
+        direction = (recovery.stage == "return" or recovery.stage == "ack") and -recovery.direction or recovery.direction
+        steering = angle(recovery.heading - data.heading_deg - clamp(cross * direction * 3, -8, 8))
+        if recovery.stage == "exit" then
+            speed = math.min(10, math.sqrt(2 * 1.4 * math.max(0, remaining)) * 3.6)
+        elseif recovery.stage == "return" then speed = 8 end
+        if recovery.stage == "exit" or recovery.stage == "return" then
+            local advance = recovery.stage == "exit" and progress or recovery.returnFrom - progress
+            if advance >= recovery.bestProgress + 0.4 then recovery.bestProgress, recovery.progressTick = advance, now end
+            if elapsed(now, recovery.progressTick) > 8000 then recovery.failure = "Нет прогресса повторного захода 8 с" end
+            if elapsed(now, recovery.since) > 45000 then recovery.failure = "Истекло время повторного захода" end
+            if math.abs(cross) > 3 or math.abs(angle(recovery.heading - data.heading_deg)) > 20 then
+                recovery.failure = "Самолёт вышел из линии повторного захода"
+            end
+            if progress > recovery.exitDistance + 4 or progress < -4 then recovery.failure = "Превышен путь повторного захода" end
+        end
+    end
+    if recovery.stage == "ack" and elapsed(now, recovery.since) > 2500 then
+        recovery.failure = "Повторный вход в метку не подтверждён заданием"
+    end
+    if recovery.failure or type(nav.marker_inside) ~= "boolean" then speed = 0 end
+    return {direction = direction, steering = steering, speed = speed, recovery = recovery}
+end
+
 function Controller:groundIntent(data, now)
     local nav = data.navigation
     local error = type(nav) == "table" and finite(nav.heading_error_deg) and nav.heading_error_deg or 0
@@ -112,16 +196,18 @@ function Controller:groundIntent(data, now)
         return {direction = 1, steering = steering, speed = 0, yaw = 8.8 * rudder,
             rudder = rudder, landing_rollout = true}
     end
-    local pending = self.pushbackPending and elapsed(now, self.pushbackNoticeTick) < 250
-    local align = self.instruction == "taxi" and not pending
+    local reentry = self:taxiReentryIntent(data, now)
+    local pending = not reentry and self.pushbackPending and elapsed(now, self.pushbackNoticeTick) < 250
+    local align = not reentry and self.instruction == "taxi" and not pending
         and (self.pushback and math.abs(error) > 50 or self.pushbackPending and math.abs(error) > 60)
     local reverse = self.instruction == "reverse" or align or pending
     -- On the new taxi leg, align the nose while still rolling backwards.
     local steering = reverse and not align and angle(error - 180) or error
     local speed = pending and 0 or align and 6 or reverse and 8 or math.abs(steering) > 60 and 4
         or math.abs(steering) > 35 and 7 or math.abs(steering) > 15 and 12 or math.abs(steering) > 5 and 18 or 26
+    if reentry then reverse, steering, speed = reentry.direction < 0, reentry.steering, reentry.speed end
     local entryLimit
-    if not reverse and math.abs(steering) <= 5 then
+    if not reentry and not reverse and math.abs(steering) <= 5 then
         speed = 35
         if type(nav) == "table" and nav.marker_type == "checkpoint" and finite(nav.marker_size_m)
             and nav.marker_size_m > 0 and finite(nav.distance_2d_m) then
@@ -163,6 +249,7 @@ function Controller:groundIntent(data, now)
     end
     return {direction = reverse and -1 or 1, steering = steering, speed = speed,
         align = align, pending = pending, yaw = yaw, runway = runway, runway_align = runwayAlign, rudder = runwayRudder,
+        reentry = reentry and reentry.recovery,
         marker_entry_speed_limit = entryLimit, held_rudder = heldRudder, predicted_steering_error = predicted}
 end
 
@@ -203,8 +290,11 @@ function Controller:update(data, now, pathClear, probeStatus)
     if self.airborne then self.takeoffPermit = nil end
     local out = neutral()
     local nav = type(data.navigation) == "table" and data.navigation or nil
-    if nav and (not finite(nav.distance_2d_m) or not finite(nav.distance_3d_m) or not finite(nav.heading_error_deg)
-        or not finite(nav.bearing_deg) or not finite(nav.altitude_error_m) or not vector(nav.position)) then nav = nil end
+    local centeredGround = nav and data.on_ground == true and nav.marker_type == "checkpoint"
+        and finite(nav.distance_2d_m) and nav.distance_2d_m <= 0.01
+    if nav and (not finite(nav.distance_2d_m) or not finite(nav.distance_3d_m)
+        or not centeredGround and (not finite(nav.heading_error_deg) or not finite(nav.bearing_deg))
+        or not finite(nav.altitude_error_m) or not vector(nav.position)) then nav = nil end
     self.detail = {waypoint = self.waypoint, instruction = self.instruction, path_clear = pathClear, probe_status = probeStatus}
     self.detail.frame_gap_ms, self.detail.timing_resynced = frameGap * 1000, resync or false
     if not self.airborne and data.frozen == true then
@@ -257,7 +347,7 @@ function Controller:update(data, now, pathClear, probeStatus)
         self.parkingHold = nil
     end
     self.detail.waypoint, self.detail.marker_changed = self.waypoint, changed
-    local error = nav.heading_error_deg
+    local error = finite(nav.heading_error_deg) and nav.heading_error_deg or 0
     local yawRate = finite(data.heading_rate_dps) and data.heading_rate_dps or 0
     local pitchRate = finite(data.pitch_rate_dps) and data.pitch_rate_dps or 0
     local rollRate = finite(data.roll_rate_dps) and data.roll_rate_dps or 0
@@ -273,6 +363,15 @@ function Controller:update(data, now, pathClear, probeStatus)
     local takeoff = ground and takeoffAllowed and not self.flightSeen and nav.marker_type == "ring"
     if ground and not takeoff then
         local intent = self:groundIntent(data, now)
+        if intent.reentry then
+            local recovery = intent.reentry
+            self.detail.taxi_reentry_stage, self.detail.taxi_reentry_reason = recovery.stage, recovery.reason
+            self.detail.taxi_reentry_stage_ms, self.detail.taxi_reentry_heading_deg = elapsed(now, recovery.since), recovery.heading
+            self.detail.taxi_reentry_exit_distance_m, self.detail.taxi_reentry_progress_m = recovery.exitDistance, recovery.progress
+            self.detail.taxi_reentry_remaining_m, self.detail.taxi_reentry_cross_track_m = recovery.remaining, recovery.cross
+            self.detail.taxi_reentry_inside, self.detail.taxi_reentry_failure = nav.marker_inside, recovery.failure
+            if recovery.failure then return self:stop(recovery.failure .. ": ручной перехват") end
+        end
         if intent.landing_rollout then
             self.phase, self.status = "landing_rollout", "Касание: торможение по направлению полосы"
             out.brake, out.rudder, out.gear_down = 1, intent.rudder, true
@@ -381,6 +480,11 @@ function Controller:update(data, now, pathClear, probeStatus)
         elseif switching or intent.pending then
             goalSpeed = 0
             self.phase, self.status = "direction_change", "Остановка перед сменой направления"
+        elseif intent.reentry then
+            self.phase = "taxi_reentry_" .. intent.reentry.stage
+            self.status = intent.reentry.stage == "exit" and "Повторный заход: выход за границу метки"
+                or intent.reentry.stage == "return" and "Повторный заход: возврат в метку"
+                or "Ожидание подтверждения наземной метки"
         elseif parking and (self.parkingHold or not size) then
             self.phase, self.status = "boarding_hold", size and "Стоянка у границы маркера: ожидание задания"
                 or "Стоянка: нет достоверного размера маркера"
@@ -523,6 +627,10 @@ function Controller:update(data, now, pathClear, probeStatus)
         local goalPitch = pass and pass.pitch or clamp(elevation + trim, -23, 22)
         local goalSpeed = self.landing and agl and clamp(125 + math.max(0, agl - 8) * 1.25, 125, 245)
             or clamp(255 - math.max(0, math.abs(goalRoll) - 15) * 1.2, 210, 255)
+        local cruiseBlend = not self.landing and not self.finalLanding
+            and clamp((15 - math.max(math.abs(goalRoll), math.abs(data.roll_deg))) / 10, 0, 1)
+                * clamp((12 - math.abs(courseError)) / 6, 0, 1) or 0
+        goalSpeed = goalSpeed + 15 * cruiseBlend
         if self.finalLanding and agl then
             local clearance = math.max(0, agl - self.contactAgl)
             local predictedClearance = math.max(0, clearance + data.climb_mps)
@@ -564,6 +672,7 @@ function Controller:update(data, now, pathClear, probeStatus)
         if self.landing then out.gear_down = true
         elseif agl and agl > 8 and elapsed(now, self.airSince) > 1000 then out.gear_down = false end
         self.detail.goal_roll_deg, self.detail.goal_pitch_deg, self.detail.goal_speed_kmh = goalRoll, goalPitch, goalSpeed
+        self.detail.cruise_speed_blend = cruiseBlend
         self.detail.guidance, self.detail.course_error_deg = pass and "ring_flythrough" or "curvature_intercept", courseError
         self.detail.goal_turn_rate_dps, self.detail.command_turn_rate_dps = wantedYaw, yawCommand
         self.detail.required_bank_deg, self.detail.bank_limit_deg = requiredBank, bankLimit
@@ -588,7 +697,7 @@ end)()
 -- END EMBEDDED PILOT CONTROLLER
 
 -- Flight recorder and opt-in local-player controller. Navigation uses live elements.
-local VERSION = "1.2.13"
+local VERSION = "1.2.14"
 local native = {log = dfPilotLog, update = dfPilotUpdate, command = dfPilotTakeCommand,
     alert = dfPlayAlertSignal, alertMonitor = dfSetAlertMonitorEnabled}
 for _, name in ipairs({"log", "update", "command", "alert", "alertMonitor"}) do

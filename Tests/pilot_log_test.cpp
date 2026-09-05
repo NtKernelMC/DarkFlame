@@ -272,6 +272,11 @@ int main()
         {
             std::scoped_lock lock(g_mutex);
             failed = !g_state["autopilot_sound_error"].empty();
+            if(failed)
+            {
+                assert(g_state["autopilot_sound_error"].find((directory / "AutoPilotON.mp3").string()) != std::string::npos);
+                assert(g_state["autopilot_sound_error"].find("MCI 275") != std::string::npos);
+            }
         }
         if(failed) break;
         assert(GetTickCount64() < errorDeadline);

@@ -95,12 +95,13 @@ class BoardingTests(unittest.TestCase):
             self.assertGreater(out['brake'], 0)
             self.assertEqual(self.c.phase, 'boarding_hold')
 
-    def test_red_taxi_and_airborne_ring_still_track_their_markers(self):
+    def test_inside_red_taxi_awaits_ack_without_becoming_parking_hold(self):
         data = boarding(distance=29, inside=True)
         data['navigation']['color_rgba'] = [255, 0, 0, 255]
         self.start(data)
-        self.assertGreater(self.update(data)['throttle'], 0)
-        self.assertEqual(self.c.phase, 'taxi')
+        self.assertEqual(self.update(data)['throttle'], 0)
+        self.assertEqual(self.c.phase, 'taxi_reentry_wait')
+        self.assertIsNone(self.c.parkingHold)
         self.setUp()
         data = boarding(distance=25, speed=190, inside=True)
         data.update(on_ground=False, agl_terrain_m=100)
