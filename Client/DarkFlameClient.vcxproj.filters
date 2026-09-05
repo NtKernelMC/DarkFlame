@@ -42,6 +42,7 @@
     <ClCompile Include="gui.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="dllmain.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="logger.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="pilot_telemetry.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="lua_args_hook.cpp"><Filter>Lua Runtime\Bridge</Filter></ClCompile>
     <ClCompile Include="lua_bridge.cpp"><Filter>Lua Runtime\Bridge</Filter></ClCompile>
     <ClCompile Include="memory_module_dumper.cpp"><Filter>Source Files</Filter></ClCompile>
@@ -103,10 +104,12 @@
     <ClInclude Include="lua_bridge_bootstrap.h"><Filter>Lua Runtime\Bridge</Filter></ClInclude>
     <ClInclude Include="lua_bridge_signatures.h"><Filter>Lua Runtime\Bridge</Filter></ClInclude>
     <ClInclude Include="lua_bridge_utils.h"><Filter>Lua Runtime\Utilities</Filter></ClInclude>
+    <ClInclude Include="input_utils.h"><Filter>Lua Runtime\Utilities</Filter></ClInclude>
     <ClInclude Include="memory_utils.h"><Filter>Lua Runtime\Utilities</Filter></ClInclude>
     <ClInclude Include="forensic_hooks.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="gui.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="logger.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="pilot_telemetry.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="lua_args_hook.h"><Filter>Lua Runtime\Bridge</Filter></ClInclude>
     <ClInclude Include="lua_bridge.h"><Filter>Lua Runtime\Bridge</Filter></ClInclude>
     <ClInclude Include="hook_utils.h"><Filter>Header Files</Filter></ClInclude>
@@ -114,13 +117,16 @@
     <ClInclude Include="memory_module_dumper.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="netc_hooks.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="netc_signatures.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="netc_sync_utils.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="script_dumper.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="script_dumper_utils.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="privacy_hooks.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="signature_scanner.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="text_display_hook.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="track_cleaner.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="netc_bitstream.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="resource.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="win32_sync.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="third_party\imgui\imgui.h"><Filter>Dependencies\ImGui</Filter></ClInclude>
     <ClInclude Include="third_party\imgui\imconfig.h"><Filter>Dependencies\ImGui</Filter></ClInclude>
     <ClInclude Include="third_party\imgui\backends\imgui_impl_dx9.h"><Filter>Dependencies\ImGui</Filter></ClInclude>

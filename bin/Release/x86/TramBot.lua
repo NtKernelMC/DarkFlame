@@ -1604,6 +1604,3 @@ pushNativeState()
 if type(onUnload) == "function" then
     onUnload(cleanup)
 end
-
-notify("Загружен. Event catcher: "
-    .. (eventCatcher and "OK" or "ошибка"), not eventCatcher)

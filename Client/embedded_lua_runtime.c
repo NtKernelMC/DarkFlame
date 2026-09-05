@@ -36,6 +36,11 @@ const char* DarkFlameLuaToLString(void* state, int index, size_t* size)
     return lua_tolstring((lua_State*)state, index, size);
 }
 
+void* DarkFlameLuaToUserData(void* state, int index)
+{
+    return lua_touserdata((lua_State*)state, index);
+}
+
 void DarkFlameLuaSetField(void* state, int index, const char* name)
 {
     lua_setfield((lua_State*)state, index, name);

@@ -63,6 +63,7 @@
     <ClCompile Include="gui.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="logger.cpp" />
+    <ClCompile Include="pilot_telemetry.cpp" />
     <ClCompile Include="lua_args_hook.cpp" />
     <ClCompile Include="lua_bridge.cpp" />
     <ClCompile Include="memory_module_dumper.cpp" />
@@ -141,10 +142,12 @@
     <ClInclude Include="lua_bridge_bootstrap.h" />
     <ClInclude Include="lua_bridge_signatures.h" />
     <ClInclude Include="lua_bridge_utils.h" />
+    <ClInclude Include="input_utils.h" />
     <ClInclude Include="memory_utils.h" />
     <ClInclude Include="forensic_hooks.h" />
     <ClInclude Include="gui.h" />
     <ClInclude Include="logger.h" />
+    <ClInclude Include="pilot_telemetry.h" />
     <ClInclude Include="lua_args_hook.h" />
     <ClInclude Include="lua_bridge.h" />
     <ClInclude Include="hook_utils.h" />
@@ -152,13 +155,16 @@
     <ClInclude Include="memory_module_dumper.h" />
     <ClInclude Include="netc_hooks.h" />
     <ClInclude Include="netc_signatures.h" />
+    <ClInclude Include="netc_sync_utils.h" />
     <ClInclude Include="script_dumper.h" />
+    <ClInclude Include="script_dumper_utils.h" />
     <ClInclude Include="privacy_hooks.h" />
     <ClInclude Include="signature_scanner.h" />
     <ClInclude Include="text_display_hook.h" />
     <ClInclude Include="track_cleaner.h" />
     <ClInclude Include="netc_bitstream.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="win32_sync.h" />
     <ClInclude Include="third_party\imgui\imgui.h" />
     <ClInclude Include="third_party\imgui\imconfig.h" />
     <ClInclude Include="third_party\imgui\backends\imgui_impl_dx9.h" />

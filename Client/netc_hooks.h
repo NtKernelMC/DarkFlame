@@ -14,5 +14,6 @@ void SetNetcLuaCallContext(std::string_view resource);
 void ClearNetcLuaCallContext();
 bool ReadLocalPlayerPosition(float& x, float& y, float& z);
 bool SendReliablePlayerPureSync(float x, float y, float z);
+bool SendVehicleSelfLink(unsigned int vehicleId);
 void BeginPlayerPureSyncSuppression();
 void EndPlayerPureSyncSuppression();

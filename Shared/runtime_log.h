@@ -38,8 +38,8 @@ inline void BeginSession()
     AcquireSRWLockExclusive(&g_lock);
     g_path = Path();
 
-    const HANDLE file = CreateFileW(g_path.c_str(), FILE_APPEND_DATA,
-        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+    const HANDLE file = CreateFileW(g_path.c_str(), GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, CREATE_ALWAYS,
         FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file != INVALID_HANDLE_VALUE)
     {

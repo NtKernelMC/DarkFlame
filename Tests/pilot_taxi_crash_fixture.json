@@ -1,0 +1,382 @@
+{
+  "source": "pilot-taxi-crash-2026-09-05-123719.log",
+  "handoff_tick_ms": 449804,
+  "handoff": {
+    "vehicle": "e3",
+    "model": 519,
+    "driver": true,
+    "dimension": 0,
+    "interior": 0,
+    "position_m": [
+      1185.438721,
+      1108.32251,
+      28.84717751
+    ],
+    "basis_world_rfu": [
+      [
+        0.09267985076,
+        0.9956960082,
+        -3.809958798e-05
+      ],
+      [
+        -0.9955326319,
+        0.09266395122,
+        -0.01811838709
+      ],
+      [
+        -0.01803687401,
+        0.00171713857,
+        0.9998358488
+      ]
+    ],
+    "heading_deg": 275.3177561,
+    "speed_kmh": 6.075635082,
+    "pitch_deg": -1.038163863,
+    "roll_deg": 0.002183303983,
+    "climb_mps": 4.185621947e-05,
+    "on_ground": true,
+    "agl_terrain_m": 1.131303787,
+    "velocity_body_rfu_mps": [
+      1.532772875e-05,
+      -1.687400223,
+      -0.03053612397
+    ],
+    "heading_rate_dps": 0,
+    "navigation": {
+      "altitude_error_m": 3.197820663,
+      "ambiguous": false,
+      "bearing_deg": 8.550916252,
+      "body_pitch_to_center_deg": 4.674695924,
+      "body_yaw_to_center_deg": 93.3184257,
+      "closing_mps": 0.0948769811,
+      "color_rgba": [
+        255,
+        0,
+        0,
+        255
+      ],
+      "current_heading_deg": 275.3177561,
+      "delta_body_rfu_m": [
+        38.57131927,
+        -2.236453866,
+        3.159287883
+      ],
+      "delta_world_m": [
+        5.744262695,
+        38.20349121,
+        3.197820663
+      ],
+      "distance_2d_m": 38.63293018,
+      "distance_3d_m": 38.76505323,
+      "element_alpha": 128,
+      "elevation_deg": 4.731841049,
+      "eta_linear_s": null,
+      "heading_error_deg": 93.23316019,
+      "id": "e12",
+      "kind": "marker",
+      "marker_size_m": 30,
+      "marker_type": "checkpoint",
+      "position": [
+        1191.182983,
+        1146.526001,
+        32.04499817
+      ],
+      "scan_age_ms": 0,
+      "selection": "sticky_rank_then_nearest_observer",
+      "target_age_ms": 0,
+      "track_deg": 95.31727514,
+      "track_error_deg": -86.76635889,
+      "turn_direction": "right",
+      "turn_remaining_deg": 93.23316019,
+      "waypoint_generation": 3
+    },
+    "health": 1000,
+    "old_probe": {
+      "bounds_local": [
+        -16.96250153,
+        -20.21672249,
+        3.944388628,
+        16.96250153,
+        14.28909397,
+        16.36450005
+      ],
+      "cost_ms": 1,
+      "lookahead_m": 5.149779176,
+      "rays": [
+        {
+          "clear": true,
+          "from": [
+            1171.206247,
+            1109.647281,
+            28.98821651
+          ],
+          "to": [
+            1166.079473,
+            1110.124479,
+            28.89491082
+          ]
+        },
+        {
+          "clear": true,
+          "from": [
+            1183.803816,
+            1090.836284,
+            29.24778097
+          ],
+          "to": [
+            1178.677043,
+            1091.313483,
+            29.15447528
+          ]
+        },
+        {
+          "clear": true,
+          "from": [
+            1187.059196,
+            1125.810109,
+            29.24644272
+          ],
+          "to": [
+            1181.932423,
+            1126.287308,
+            29.15313703
+          ]
+        },
+        {
+          "clear": true,
+          "from": [
+            1178.955361,
+            1100.408083,
+            29.14387684
+          ],
+          "to": [
+            1173.828588,
+            1100.885282,
+            29.05057115
+          ]
+        },
+        {
+          "clear": true,
+          "from": [
+            1180.527443,
+            1117.297578,
+            29.14323058
+          ],
+          "to": [
+            1175.40067,
+            1117.774777,
+            29.04992489
+          ]
+        }
+      ],
+      "reverse": false,
+      "tick_ms": 449802
+    },
+    "old_output": {
+      "aileron": 0,
+      "brake": 0,
+      "elevator": 0,
+      "gear_down": true,
+      "handbrake": false,
+      "rudder": 0.8888895695,
+      "throttle": 0.35
+    }
+  },
+  "preimpact_tick_ms": 452462,
+  "preimpact": {
+    "vehicle": "e3",
+    "model": 519,
+    "driver": true,
+    "dimension": 0,
+    "interior": 0,
+    "position_m": [
+      1180.022583,
+      1109.343262,
+      28.84712791
+    ],
+    "basis_world_rfu": [
+      [
+        0.2483392358,
+        0.9686731696,
+        4.094415272e-05
+      ],
+      [
+        -0.9685144424,
+        0.2482993007,
+        -0.01809166186
+      ],
+      [
+        -0.01753507182,
+        0.00445321342,
+        0.9998363256
+      ]
+    ],
+    "heading_deg": 284.3792999,
+    "speed_kmh": 10.17384219,
+    "pitch_deg": -1.036632384,
+    "roll_deg": -0.002346311176,
+    "climb_mps": -0.002611312084,
+    "on_ground": true,
+    "agl_terrain_m": 1.131254196,
+    "velocity_body_rfu_mps": [
+      0.02422120979,
+      2.82554712,
+      0.04851447357
+    ],
+    "heading_rate_dps": 4.601674179,
+    "navigation": {
+      "altitude_error_m": 3.197870255,
+      "ambiguous": false,
+      "bearing_deg": 16.70713035,
+      "body_pitch_to_center_deg": 4.66381201,
+      "body_yaw_to_center_deg": 92.41275269,
+      "closing_mps": -0.09049183151,
+      "color_rgba": [
+        255,
+        0,
+        0,
+        255
+      ],
+      "current_heading_deg": 284.3792999,
+      "delta_body_rfu_m": [
+        38.78961813,
+        -1.634415594,
+        3.167231096
+      ],
+      "delta_world_m": [
+        11.16040039,
+        37.18273926,
+        3.197870255
+      ],
+      "distance_2d_m": 38.82152284,
+      "distance_3d_m": 38.95301028,
+      "element_alpha": 128,
+      "elevation_deg": 4.709030367,
+      "eta_linear_s": null,
+      "heading_error_deg": 92.32783045,
+      "heading_error_rate_dps": -0.4746296803,
+      "id": "e12",
+      "kind": "marker",
+      "marker_size_m": 30,
+      "marker_type": "checkpoint",
+      "position": [
+        1191.182983,
+        1146.526001,
+        32.04499817
+      ],
+      "scan_age_ms": 126,
+      "selection": "sticky_rank_then_nearest_observer",
+      "target_age_ms": 2659,
+      "track_deg": 284.8703278,
+      "track_error_deg": 91.83680256,
+      "turn_direction": "right",
+      "turn_remaining_deg": 92.32783045,
+      "turn_remaining_rate_dps": -0.4746296803,
+      "waypoint_generation": 3
+    },
+    "health": 1000,
+    "old_probe": {
+      "bounds_local": [
+        -16.96250153,
+        -20.21672249,
+        3.944388628,
+        16.96250153,
+        14.28909397,
+        16.36450005
+      ],
+      "cost_ms": 1,
+      "lookahead_m": 6.03138121,
+      "rays": [
+        {
+          "clear": true,
+          "from": [
+            1166.324065,
+            1112.781368,
+            28.98698428
+          ],
+          "to": [
+            1160.71253,
+            1115.194741,
+            28.87713241
+          ]
+        },
+        {
+          "clear": true,
+          "from": [
+            1175.902348,
+            1092.267769,
+            29.24858601
+          ],
+          "to": [
+            1170.290813,
+            1094.681142,
+            29.13873414
+          ]
+        },
+        {
+          "clear": true,
+          "from": [
+            1184.458548,
+            1126.334723,
+            29.24548009
+          ],
+          "to": [
+            1178.847013,
+            1128.748096,
+            29.13562822
+          ]
+        },
+        {
+          "clear": true,
+          "from": [
+            1172.571923,
+            1102.46752,
+            29.14376349
+          ],
+          "to": [
+            1166.960388,
+            1104.880893,
+            29.03391163
+          ]
+        },
+        {
+          "clear": true,
+          "from": [
+            1176.703867,
+            1118.91907,
+            29.14226359
+          ],
+          "to": [
+            1171.092332,
+            1121.332443,
+            29.03241172
+          ]
+        }
+      ],
+      "reverse": false,
+      "tick_ms": 452400
+    },
+    "old_output": {
+      "aileron": 0,
+      "brake": 0,
+      "elevator": 0,
+      "gear_down": true,
+      "handbrake": false,
+      "rudder": 0.709137464,
+      "throttle": 0
+    }
+  },
+  "collision": {
+    "position": [
+      1165.703247,
+      1113.781982,
+      31.50281143
+    ],
+    "normal": [
+      0.6109418869,
+      -0.7558341026,
+      -0.2355094701
+    ],
+    "force_raw": 62.12634659
+  }
+}

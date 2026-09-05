@@ -15,6 +15,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace
 {
@@ -110,13 +111,16 @@ bool IsAdminPresenceMessage(std::string_view message)
 
 void __fastcall HookTextDisplaySetCaption(void* self, void*, const char* caption)
 {
+    constexpr std::string_view MirroredAdminPrefix =
+        "[ТРЕВОГА] Админ крикнул:";
     g_textDisplaySetCaption(self, caption);
     const bool alertMonitorEnabled = LuaAlertMonitorEnabled();
     if(!caption || !alertMonitorEnabled)
         return;
 
     std::string message(caption);
-    if(!ContainsI(message, "(ADMIN)"))
+    if(!ContainsI(message, "(ADMIN)")
+        || message.find(MirroredAdminPrefix) != std::string::npos)
         return;
     std::replace_if(message.begin(), message.end(), [](char value)
     {
@@ -125,7 +129,10 @@ void __fastcall HookTextDisplaySetCaption(void* self, void*, const char* caption
 
     const bool presence = IsAdminPresenceMessage(message);
     if(!presence)
+    {
         PlayTramAlertSignal();
+        GuiQueueTramAdminCaption(std::move(message));
+    }
     Log::Write(presence ? L"[alert] admin presence caption detected"
         : L"[alert] admin caption detected");
 }

@@ -2,6 +2,7 @@
 
 #include "logger.h"
 #include "lua_bridge.h"
+#include "pilot_telemetry.h"
 #include "resource.h"
 
 #include <MinHook.h>
@@ -976,13 +977,17 @@ void RenderMenu()
 {
     ImGuiIO& io = ImGui::GetIO();
     io.MouseDrawCursor = true;
+    const bool pilotLayout = g_activeTab == 5;
     const float scale = std::min(io.DisplaySize.x / CanvasWidth,
-        io.DisplaySize.y / CanvasHeight) * 0.94f;
-    const ImVec2 size(CanvasWidth * scale, CanvasHeight * scale);
+        io.DisplaySize.y / (pilotLayout ? 900.0f : CanvasHeight)) * 0.94f;
+    const float height = pilotLayout ? std::max(900.0f, io.DisplaySize.y * 0.97f / scale) : CanvasHeight;
+    const ImVec2 size(CanvasWidth * scale, height * scale);
     const ImVec2 centered((io.DisplaySize.x - size.x) * 0.5f,
         (io.DisplaySize.y - size.y) * 0.5f);
 
-    ImGui::SetNextWindowPos(centered, ImGuiCond_Once);
+    static bool previousPilotLayout = pilotLayout;
+    ImGui::SetNextWindowPos(centered, previousPilotLayout != pilotLayout ? ImGuiCond_Always : ImGuiCond_Once);
+    previousPilotLayout = pilotLayout;
     ImGui::SetNextWindowSize(size);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2());
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -1003,7 +1008,8 @@ void RenderMenu()
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->AddImage(Texture(g_background), origin,
         {origin.x + size.x, origin.y + size.y});
-    draw->AddImage(Texture(g_banner), point(80.0f, 113.0f), point(1456.0f, 404.0f));
+    draw->AddImage(Texture(g_banner), point(80.0f, pilotLayout ? 100.0f : 113.0f),
+        point(1456.0f, pilotLayout ? 220.0f : 404.0f));
 
     DrawFlame(draw, point(94.0f, 61.0f), 22.0f * scale);
     const char* title = "Dark Flame by DroidZero";
@@ -1014,21 +1020,17 @@ void RenderMenu()
         {origin.x + (size.x - titleSize.x) * 0.5f, point(0.0f, 45.0f).y},
         IM_COL32(245, 228, 255, 255), title);
 
-    DrawCodeIcon(draw, point(111.0f, 453.0f), 15.0f * scale,
+    const float tabY = pilotLayout ? 235.0f : 421.0f;
+    DrawCodeIcon(draw, point(111.0f, tabY + 32.0f), 15.0f * scale,
         IM_COL32(201, 45, 255, 255));
-    DrawTab("##tab_lua", "Lua Injector", 0, point(135.0f, 421.0f),
-        extent(230.0f, 65.0f), g_activeTab == 0, draw, scale);
-    DrawTab("##tab_events", "Event Monitor", 1, point(385.0f, 421.0f),
-        extent(230.0f, 65.0f), g_activeTab == 1, draw, scale);
-    DrawTab("##tab_threads", "Lua Threads", 2, point(635.0f, 421.0f),
-        extent(230.0f, 65.0f), g_activeTab == 2, draw, scale);
-    DrawTab("##tab_tram", "TramBot", 3, point(885.0f, 421.0f),
-        extent(230.0f, 65.0f), g_activeTab == 3, draw, scale);
-    DrawTab("##tab_jbk", "JBK Bot", 4, point(1135.0f, 421.0f),
-        extent(230.0f, 65.0f), g_activeTab == 4, draw, scale);
-    const ImVec2 contentPosition = point(105.0f, 495.0f);
+    const char* tabIds[]{"##tab_lua", "##tab_events", "##tab_threads", "##tab_tram", "##tab_jbk", "##tab_pilot"};
+    const char* tabNames[]{"Lua Injector", "Event Monitor", "Lua Threads", "TramBot", "JBK Bot", "Pilot"};
+    for(int i = 0; i < 6; ++i)
+        DrawTab(tabIds[i], tabNames[i], i, point(135.0f + i * 214.0f, tabY),
+            extent(194.0f, 65.0f), g_activeTab == i, draw, scale);
+    const ImVec2 contentPosition = point(105.0f, pilotLayout ? 312.0f : 495.0f);
     const ImVec2 contentSize = extent(1326.0f,
-        g_activeTab == 0 ? 285.0f : 310.0f);
+        pilotLayout ? height - 342.0f : g_activeTab == 0 ? 285.0f : 310.0f);
     ImGui::SetCursorScreenPos(contentPosition);
     ImGui::PushFont(g_codeFont, g_codeFont->LegacySize * scale);
     if(g_activeTab == 0)
@@ -1056,8 +1058,10 @@ void RenderMenu()
         DrawThreadList(contentPosition, contentSize, scale);
     else if(g_activeTab == 3)
         DrawTramBot(contentPosition, contentSize, scale);
-    else
+    else if(g_activeTab == 4)
         DrawJbkBot(contentPosition, contentSize, scale);
+    else
+        DrawPilotTelemetry(contentPosition, contentSize, scale);
     ImGui::PopFont();
 
     if(g_activeTab == 0 && DrawActionButton("##inject_visual", "Inject",

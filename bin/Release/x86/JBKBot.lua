@@ -1403,7 +1403,7 @@ local onUpdateStrict = function()
     end
 end
 
-addEventHandler("onClientPreRender", root, onUpdateStrict)
+local movementTimer = setTimer(onUpdateStrict, 50, 0)
 
 -- ============================================================
 -- JBK OPTIONS — единое окно настроек /jbkoptions
@@ -3151,11 +3151,13 @@ end, 50, 0)
 
 setTimer(syncNativeJbkState, 500, 0)
 syncNativeJbkState()
-outputChatBox("#0037FF[DarkFlame] #FFFFFFЖБК Бот загружен: Shift+R > JBK Bot.", 255,255,255,true)
 
 if type(onUnload) == "function" then
     onUnload(function()
         _STATE = false
+        if movementTimer and isTimer(movementTimer) then
+            killTimer(movementTimer)
+        end
         pcall(changeBotState, false)
         releaseBotControls()
         api.mouse("right", false)

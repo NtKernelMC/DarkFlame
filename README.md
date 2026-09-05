@@ -10,15 +10,6 @@ Visual Studio 2026 C++ solution containing `DarkFlame.exe` and two x86 DLLs:
 Build `DarkFlame.sln` with `Release | x86`. Artifacts are written to
 `bin/Release/x86`.
 
-The client is initialized synchronously while `gta_sa.exe` is still suspended.
-It hooks `LdrLoadDll` before the game is resumed and installs the netc detours
-before the intercepted netc load returns. Bootstrap fails closed: the game child
-is not resumed if the client cannot become ready.
-
-The netc layer installs ten no-op/constant-return anti-cheat hooks and one
-selective `CNet__SendPacket` filter. The packet filter preserves the original
-call for normal traffic and acknowledges blocked packet IDs 34, 91, 92, and 94
-locally. Runtime hook calls are intentionally not logged.
 
 Both manually mapped DLLs install a PDB-aware crash handler. Release builds emit
 `DarkFlameAgent.pdb` and `DarkFlameClient.pdb`; keep each PDB beside its DLL.

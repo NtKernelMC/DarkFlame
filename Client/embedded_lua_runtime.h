@@ -13,6 +13,7 @@ void DarkFlameLuaSetTop(void* lua, int index);
 int DarkFlameLuaIsNumber(void* lua, int index);
 double DarkFlameLuaToNumber(void* lua, int index);
 const char* DarkFlameLuaToLString(void* lua, int index, size_t* size);
+void* DarkFlameLuaToUserData(void* lua, int index);
 void DarkFlameLuaSetField(void* lua, int index, const char* name);
 void DarkFlameLuaGetField(void* lua, int index, const char* name);
 void DarkFlameLuaPushBoolean(void* lua, int value);

@@ -5,10 +5,12 @@
 #include "logger.h"
 #include "memory_utils.h"
 #include "netc_signatures.h"
+#include "netc_sync_utils.h"
 #include "script_dumper.h"
 #include "signature_scanner.h"
 #include "netc_bitstream.h"
 #include "track_cleaner.h"
+#include "win32_sync.h"
 
 #include <algorithm>
 #include <array>
@@ -25,6 +27,8 @@
 namespace
 {
     using namespace MemoryUtil;
+    using namespace NetcSyncUtil;
+    using namespace Win32Sync;
 
     using SendPacket = bool(__thiscall*)(void*, unsigned char, void*, int, int, int);
     using RakPeerSend = char(__thiscall*)(void*, void*, int, int, char, int,
@@ -40,6 +44,7 @@ namespace
     SRWLOCK g_installLock = SRWLOCK_INIT;
     SRWLOCK g_clientApiLock = SRWLOCK_INIT;
     SRWLOCK g_contextLock = SRWLOCK_INIT;
+    SRWLOCK g_vehicleSelfLinkLock = SRWLOCK_INIT;
     SendPacket g_sendPacket{};
     RakPeerSend g_rakPeerSend{};
     GetElement g_getElement{};
@@ -64,6 +69,9 @@ namespace
     std::atomic_uint g_decodeFailures{};
     std::atomic<void*> g_netInstance{};
     std::atomic_uint32_t g_playerPureSyncSuppression{};
+
+    VehicleTemplate g_vehicleSelfLinkTemplate;
+    std::atomic_uint g_vehicleSelfLinkCaptureStatus{};
 
     std::mt19937 RandomEngine()
     {
@@ -123,7 +131,10 @@ namespace
 
     constexpr unsigned char LuaEventPacket = 81;
     constexpr unsigned char PlayerPureSyncPacket = 32;
+    constexpr unsigned char VehiclePureSyncPacket = 33;
     constexpr int PacketPriorityHigh = 0;
+    constexpr int PacketPriorityMedium = 1;
+    constexpr int PacketReliabilityUnreliableSequenced = 1;
     constexpr int PacketReliabilityReliableOrdered = 3;
     constexpr int PacketOrderingDefault = 0;
     constexpr std::size_t AllocateBitStreamVtableIndex = 8;
@@ -137,6 +148,8 @@ namespace
     using BitStreamReader = Netc::BitStream;
 
     std::string Escape(std::string_view value);
+    void CaptureVehiclePureSync(Netc::BitStream* stream);
+    void ClearVehicleSelfLinkTemplate();
 
     std::string CurrentResource()
     {
@@ -501,6 +514,10 @@ namespace
         void* bitStream, int priority, int reliability, int ordering)
     {
         g_netInstance.store(self, std::memory_order_release);
+        if(packetId == VehiclePureSyncPacket)
+            CaptureVehiclePureSync(static_cast<Netc::BitStream*>(bitStream));
+        else if(packetId == PlayerPureSyncPacket)
+            ClearVehicleSelfLinkTemplate();
         ObservePacket(packetId, bitStream);
         const bool blocked = packetId == 34 || packetId == 91
             || packetId == 92 || packetId == 94;
@@ -525,97 +542,86 @@ namespace
         return original(self, packetId, bitStream);
     }
 
-    int RoundSync(float value)
+    void SetCaptureStatus(VehicleCaptureStatus status)
     {
-        return static_cast<int>(std::floor(value + 0.5f));
+        const unsigned int raw = static_cast<unsigned int>(status);
+        const unsigned int previous = g_vehicleSelfLinkCaptureStatus.exchange(
+            raw, std::memory_order_acq_rel);
+        if(previous == raw)
+            return;
+        Log::Write(std::wstring(L"[self-link] capture status: ")
+            + CaptureStatusText(status));
     }
 
-    void WriteMappedFloat(Netc::BitStream& stream, float value,
-        unsigned int bits, float minimum, float maximum,
-        bool preserveGreaterThanMinimum = false)
+    void ClearVehicleSelfLinkTemplate()
     {
-        value = std::clamp(value, minimum, maximum);
-        const float alpha = (value - minimum) / (maximum - minimum);
-        const unsigned int maximumBits = (1u << bits) - 1;
-        unsigned int encoded = static_cast<unsigned int>(
-            RoundSync(static_cast<float>(maximumBits) * alpha));
-        if(preserveGreaterThanMinimum && !encoded && alpha > 0.0f)
-            encoded = 1;
-        stream.WriteBits(reinterpret_cast<const char*>(&encoded), bits);
-    }
-
-    void WriteFixedPositionAxis(Netc::BitStream& stream, float value)
-    {
-        value = std::clamp(value, -8192.0f, 8191.0f);
-        const int encoded = RoundSync(value * 1024.0f);
-        stream.WriteBits(reinterpret_cast<const char*>(&encoded), 24);
-    }
-
-    bool ReadLocalPlayerState(float* position, float& health, float& armor)
-    {
-        __try
         {
-            const std::uintptr_t ped = *reinterpret_cast<const std::uint32_t*>(
-                0x00B6F5F0u);
-            if(!ped)
-                return false;
-            if(position)
+            ExclusiveLock lock(g_vehicleSelfLinkLock);
+            g_vehicleSelfLinkTemplate = {};
+        }
+        SetCaptureStatus(VehicleCaptureStatus::OnFoot);
+    }
+
+    void CaptureVehiclePureSync(Netc::BitStream* stream)
+    {
+        if(!stream)
+            return;
+        const int savedOffset = stream->Offset();
+        VehicleLayout layout{};
+        const unsigned short version = stream->Version();
+        const unsigned int preferred = version >= 0x076 ? 60 : 76;
+        const VehicleLayoutResult preferredResult =
+            ReadVehicleLayout(*stream, preferred, layout);
+        if(preferredResult != VehicleLayoutResult::Ready)
+        {
+            const unsigned int fallback = preferred == 60 ? 76 : 60;
+            const VehicleLayoutResult fallbackResult =
+                ReadVehicleLayout(*stream, fallback, layout);
+            if(fallbackResult != VehicleLayoutResult::Ready)
             {
-                position[0] = *reinterpret_cast<const float*>(ped + 0x4);
-                position[1] = *reinterpret_cast<const float*>(ped + 0x8);
-                position[2] = *reinterpret_cast<const float*>(ped + 0xC);
+                stream->Offset(savedOffset);
+                {
+                    ExclusiveLock lock(g_vehicleSelfLinkLock);
+                    g_vehicleSelfLinkTemplate = {};
+                }
+                SetCaptureStatus(VehicleCaptureStatus::Malformed);
+                return;
             }
-            health = *reinterpret_cast<const float*>(ped + 0x540);
-            armor = *reinterpret_cast<const float*>(ped + 0x548);
-            return (!position || (std::isfinite(position[0])
-                && std::isfinite(position[1]) && std::isfinite(position[2])))
-                && std::isfinite(health) && std::isfinite(armor);
         }
-        __except(EXCEPTION_EXECUTE_HANDLER)
+
+        VehicleTemplate captured;
+        const unsigned int total = static_cast<unsigned int>(
+            stream->GetNumberOfBitsUsed());
+        captured.prefixBits = layout.trailerStart;
+        captured.positionBits = layout.positionBits;
+        captured.rotationBits = 48;
+        captured.suffixBits = total - layout.trailerEnd;
+        captured.version = version;
+        captured.tick = GetTickCount64();
+        captured.valid = ReadPackedBits(*stream, 0, captured.prefixBits,
+            captured.prefix)
+            && ReadPackedBits(*stream, layout.positionStart,
+                captured.positionBits, captured.position)
+            && ReadPackedBits(*stream, layout.rotationStart,
+                captured.rotationBits, captured.rotation)
+            && ReadPackedBits(*stream, layout.trailerEnd,
+                captured.suffixBits, captured.suffix);
+        stream->Offset(savedOffset);
+        if(!captured.valid)
         {
-            return false;
+            {
+                ExclusiveLock lock(g_vehicleSelfLinkLock);
+                g_vehicleSelfLinkTemplate = {};
+            }
+            SetCaptureStatus(VehicleCaptureStatus::CopyFailed);
+            return;
         }
-    }
 
-    bool WritePlayerPureSync(Netc::BitStream& stream, float x, float y,
-        float z, float health, float armor)
-    {
-        const unsigned char zeroByte{};
-        const char zeroAxis{};
-        stream.Write(zeroByte);
-        stream.WriteBits(reinterpret_cast<const char*>(&zeroByte), 8);
-        if(stream.Version() >= 0x06F)
         {
-            stream.WriteBit(false);
-            stream.WriteBit(false);
+            ExclusiveLock lock(g_vehicleSelfLinkLock);
+            g_vehicleSelfLinkTemplate = std::move(captured);
         }
-        stream.Write(zeroAxis);
-        stream.Write(zeroAxis);
-
-        const unsigned short flags = 1u << 10;
-        stream.WriteBits(reinterpret_cast<const char*>(&flags), 12);
-        if(stream.Version() >= 0x08A)
-            stream.WriteBit(false);
-        WriteFixedPositionAxis(stream, x);
-        WriteFixedPositionAxis(stream, y);
-        z = std::clamp(z, -99999.0f, 99999.0f);
-        stream.Write(z);
-        WriteMappedFloat(stream, 0.0f, 16, -3.14159265f, 3.14159265f);
-        stream.WriteBit(false);
-        WriteMappedFloat(stream, health, 8, 0.0f, 255.0f, true);
-        WriteMappedFloat(stream, armor, 8, 0.0f, 127.5f, true);
-        WriteMappedFloat(stream, 0.0f, 12, -3.14159265f, 3.14159265f);
-
-        WriteMappedFloat(stream, 0.0f, 8, -3.14159265f, 3.14159265f);
-        WriteMappedFloat(stream, 0.0f, 8, -3.14159265f, 3.14159265f);
-        stream.WriteBit(false);
-        unsigned int cameraRange{};
-        stream.WriteBits(reinterpret_cast<const char*>(&cameraRange), 2);
-        WriteMappedFloat(stream, 0.0f, 3, -4.0f, 4.0f);
-        WriteMappedFloat(stream, 0.0f, 3, -4.0f, 4.0f);
-        WriteMappedFloat(stream, 0.0f, 3, -4.0f, 4.0f);
-        stream.WriteBit(false);
-        return true;
+        SetCaptureStatus(VehicleCaptureStatus::Ready);
     }
 
     struct RakBitStreamView
@@ -827,6 +833,123 @@ bool SendReliablePlayerPureSync(float x, float y, float z)
     deallocate(net, stream);
     if(!result)
         Log::Write(L"[sync-event] PureSync rejected by CNet::SendPacket");
+    return result;
+}
+
+bool SendVehicleSelfLink(unsigned int vehicleId)
+{
+    constexpr unsigned int MaxServerElements = 1u << 17;
+    constexpr ULONGLONG TemplateLifetimeMs = 1500;
+    Log::Write(L"[self-link] send begin: packet=33 vehicle-id="
+        + std::to_wstring(vehicleId));
+    if(vehicleId >= MaxServerElements)
+    {
+        Log::Write(L"[self-link] send return=false: invalid vehicle element "
+            L"ID (must fit 17 bits)");
+        return false;
+    }
+
+    VehicleTemplate packet;
+    {
+        SharedLock lock(g_vehicleSelfLinkLock);
+        packet = g_vehicleSelfLinkTemplate;
+    }
+    const ULONGLONG now = GetTickCount64();
+    const ULONGLONG age = packet.valid ? now - packet.tick : 0;
+    if(!packet.valid || age > TemplateLifetimeMs)
+    {
+        const auto status = static_cast<VehicleCaptureStatus>(
+            g_vehicleSelfLinkCaptureStatus.load(std::memory_order_acquire));
+        Log::Write(std::wstring(L"[self-link] send return=false: fresh vehicle "
+            L"puresync is unavailable; capture=") + CaptureStatusText(status)
+            + L" age-ms=" + std::to_wstring(age));
+        return false;
+    }
+    Log::Write(L"[self-link] template: version="
+        + std::to_wstring(packet.version) + L" age-ms="
+        + std::to_wstring(age) + L" prefix-bits="
+        + std::to_wstring(packet.prefixBits) + L" position-bits="
+        + std::to_wstring(packet.positionBits) + L" rotation-bits="
+        + std::to_wstring(packet.rotationBits) + L" suffix-bits="
+        + std::to_wstring(packet.suffixBits));
+    if(packet.prefix.empty() || packet.position.empty()
+        || packet.rotation.empty() || packet.suffix.empty())
+    {
+        Log::Write(L"[self-link] send return=false: captured bit segments "
+            L"are incomplete");
+        return false;
+    }
+
+    void* net = g_netInstance.load(std::memory_order_acquire);
+    if(!net || !g_sendPacket)
+    {
+        Log::Write(L"[self-link] send return=false: CNet or SendPacket is "
+            L"unavailable");
+        return false;
+    }
+    void** vtable{};
+    AllocateBitStream allocate{};
+    DeallocateBitStream deallocate{};
+    if(!ReadValue(net, 0, vtable) || !vtable
+        || !ReadValue(vtable, AllocateBitStreamVtableIndex * sizeof(void*),
+            allocate)
+        || !ReadValue(vtable, DeallocateBitStreamVtableIndex * sizeof(void*),
+            deallocate)
+        || !allocate || !deallocate)
+    {
+        Log::Write(L"[self-link] send return=false: CNet bitstream ABI is "
+            L"unavailable");
+        return false;
+    }
+
+    Netc::BitStream* stream = allocate(net);
+    if(!stream)
+    {
+        Log::Write(L"[self-link] send return=false: bitstream allocation "
+            L"failed");
+        return false;
+    }
+    if(stream->Version() != packet.version)
+    {
+        const unsigned short actualVersion = stream->Version();
+        deallocate(net, stream);
+        Log::Write(L"[self-link] send return=false: bitstream version changed "
+            L"from " + std::to_wstring(packet.version) + L" to "
+            + std::to_wstring(actualVersion));
+        return false;
+    }
+
+    stream->WriteBits(reinterpret_cast<const char*>(packet.prefix.data()),
+        packet.prefixBits);
+    stream->WriteBit(true);
+    stream->WriteBits(reinterpret_cast<const char*>(&vehicleId), 17);
+    stream->WriteBits(reinterpret_cast<const char*>(packet.position.data()),
+        packet.positionBits);
+    stream->WriteBits(reinterpret_cast<const char*>(packet.rotation.data()),
+        packet.rotationBits);
+    stream->WriteBit(false);
+    stream->WriteBits(reinterpret_cast<const char*>(packet.suffix.data()),
+        packet.suffixBits);
+    const unsigned int expectedBits = packet.prefixBits + 1 + 17
+        + packet.positionBits + packet.rotationBits + 1 + packet.suffixBits;
+    const int usedBits = stream->GetNumberOfBitsUsed();
+    if(usedBits < 0 || static_cast<unsigned int>(usedBits) != expectedBits)
+    {
+        deallocate(net, stream);
+        Log::Write(L"[self-link] send return=false: constructed bit count="
+            + std::to_wstring(usedBits) + L" expected="
+            + std::to_wstring(expectedBits));
+        return false;
+    }
+    const bool result = g_sendPacket(net, VehiclePureSyncPacket, stream,
+        PacketPriorityMedium, PacketReliabilityUnreliableSequenced,
+        PacketOrderingDefault);
+    deallocate(net, stream);
+    Log::Write(std::wstring(L"[self-link] CNet::SendPacket returned ")
+        + (result ? L"true" : L"false") + L": packet=33 bits="
+        + std::to_wstring(usedBits) + L" priority=1 reliability=1 ordering=0");
+    Log::Write(result ? L"[self-link] send return=true"
+        : L"[self-link] send return=false: CNet rejected packet");
     return result;
 }
 
