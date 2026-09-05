@@ -3,7 +3,7 @@ local PilotController = (function()
 -- Pure controller: no game APIs, resource loading or server events.
 local Controller = {}
 Controller.__index = Controller
-Controller.version = "0.1.10"
+Controller.version = "0.1.11"
 
 local function finite(v) return type(v) == "number" and v == v and math.abs(v) < math.huge end
 local function clamp(v, low, high) return math.max(low, math.min(high, v)) end
@@ -44,7 +44,8 @@ function Controller:notify(text, now)
     elseif text:find("Приготовьтесь к взлету", 1, true) or text:find("Приготовьтесь к взлёту", 1, true) then mode = "wait_clearance"
     elseif text:find("Взлет разрешен", 1, true) or text:find("Взлёт разрешен", 1, true) then mode = "takeoff"
     elseif text:find("Ожидайте", 1, true) and text:find("пассажир", 1, true) then mode = "passengers"
-    elseif text:find("Выпустите шасси", 1, true) then self.landing = true
+    elseif text:find("Выпустите шасси", 1, true) then
+        self.landing, self.gearJobRequest, self.gearDeployReason = true, true, "job_notice"
     end
     if mode == "takeoff" then self.takeoffPermit = now or self.lastTick or 0 end
     if mode and mode ~= self.instruction then
@@ -56,6 +57,7 @@ function Controller:notify(text, now)
         if mode == "takeoff" or mode == "reverse" or mode == "boarding_move" then
             self.finalLanding, self.landingHeading = false, nil
             self.flightSeen, self.landing = false, false
+            self.gearJobRequest, self.gearDeployReason = false, nil
             self.takeoffRolling = false
             self.descendingWaypoints = 0
         end
@@ -93,6 +95,8 @@ function Controller:start(data, now)
         and clamp(data.agl_terrain_m, 0.5, 3) or 1.15
     if self.airborne and data.landing_gear_down == true and data.speed_kmh < 210
         and finite(data.climb_mps) and data.climb_mps < -1 and data.agl_terrain_m < 100 then self.landing = true end
+    self.gearDeployReason = self.gearJobRequest and "job_notice"
+        or self.airborne and self.landing and data.landing_gear_down == true and "already_down_on_approach" or nil
     self.phase, self.status = "armed", "Включён"
     return true
 end
@@ -669,8 +673,20 @@ function Controller:update(data, now, pathClear, probeStatus)
         if speedError > -2 then out.throttle = clamp(0.65 + speedError * 0.04, 0, 1)
         elseif speedError < -5 then out.brake = clamp(-speedError * 0.025, 0, self.landing and 0.8 or 0.35) end
         if self.finalLanding then out.throttle = 0 end
-        if self.landing then out.gear_down = true
+        local contactSeconds = agl and data.climb_mps < -0.5
+            and math.max(0, agl - self.contactAgl) / -data.climb_mps or nil
+        if self.landing then
+            if not self.gearDeployReason then
+                if self.finalLanding then self.gearDeployReason = "final_landing"
+                elseif not agl then self.gearDeployReason = "agl_unavailable"
+                elseif data.landing_gear_down == true then self.gearDeployReason = "already_down_on_approach"
+                elseif agl <= 60 then self.gearDeployReason = "approach_altitude"
+                elseif agl <= 100 and contactSeconds and contactSeconds <= 10 then self.gearDeployReason = "descent_time" end
+            end
+            out.gear_down = self.gearDeployReason ~= nil
         elseif agl and agl > 8 and elapsed(now, self.airSince) > 1000 then out.gear_down = false end
+        self.detail.gear_command_reason = self.gearDeployReason or (self.landing and "approach_wait" or nil)
+        self.detail.gear_contact_linear_s, self.detail.gear_deploy_agl_m = contactSeconds, self.landing and 60 or nil
         self.detail.goal_roll_deg, self.detail.goal_pitch_deg, self.detail.goal_speed_kmh = goalRoll, goalPitch, goalSpeed
         self.detail.cruise_speed_blend = cruiseBlend
         self.detail.guidance, self.detail.course_error_deg = pass and "ring_flythrough" or "curvature_intercept", courseError
@@ -697,7 +713,7 @@ end)()
 -- END EMBEDDED PILOT CONTROLLER
 
 -- Flight recorder and opt-in local-player controller. Navigation uses live elements.
-local VERSION = "1.2.14"
+local VERSION = "1.2.15"
 local native = {log = dfPilotLog, update = dfPilotUpdate, command = dfPilotTakeCommand,
     alert = dfPlayAlertSignal, alertMonitor = dfSetAlertMonitorEnabled}
 for _, name in ipairs({"log", "update", "command", "alert", "alertMonitor"}) do
@@ -1926,7 +1942,8 @@ applyAutopilot = function(now)
             if (state.gearAttempts or 0) >= 3 then stopAutopilot("Шасси не отвечают на управление"); return end
             state.gearAttempts = (state.gearAttempts or 0) + 1
             state.gearAttemptTick, state.gearPulse = now, now
-            emit("autopilot_gear_request", {down = out.gear_down, observed_down = gearDown, attempt = state.gearAttempts}, true)
+            emit("autopilot_gear_request", {down = out.gear_down, observed_down = gearDown, attempt = state.gearAttempts,
+                reason = autopilot.detail and autopilot.detail.gear_command_reason or NULL}, true)
         end
     end
     local holding = autopilot.detail and autopilot.detail.rudder_control == "hold"
