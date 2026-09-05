@@ -3,7 +3,7 @@ local PilotController = (function()
 -- Pure controller: no game APIs, resource loading or server events.
 local Controller = {}
 Controller.__index = Controller
-Controller.version = "0.1.12"
+Controller.version = "0.1.13"
 
 local function finite(v) return type(v) == "number" and v == v and math.abs(v) < math.huge end
 local function clamp(v, low, high) return math.max(low, math.min(high, v)) end
@@ -76,6 +76,7 @@ function Controller:start(data, now)
     self.enabled, self.vehicle, self.world = true, data.vehicle, tostring(data.dimension) .. ":" .. tostring(data.interior)
     self.lastTick, self.started, self.navPosition, self.navId = now, now, nil, nil
     self.controlReady = false
+    self.groundProgress = nil
     self.groundSince, self.airSince, self.missingSince = nil, nil, nil
     self.airborne = data.on_ground == false and finite(data.agl_terrain_m) and data.agl_terrain_m > 3
     self.flightSeen = self.airborne or false
@@ -191,15 +192,75 @@ function Controller:taxiReentryIntent(data, now)
     return {direction = direction, steering = steering, speed = speed, recovery = recovery}
 end
 
+function Controller:updateGroundProgress(data, now)
+    local speed = data.horizontal_speed_kmh
+    if data.on_ground ~= true or data.frozen == true or not vector(data.position_m)
+        or not finite(speed) or speed < 5 then self.groundProgress = nil; return end
+    local p = self.groundProgress
+    local dt = p and elapsed(now, p.tick) / 1000 or 0
+    if not p or dt > 1 then
+        self.groundProgress = {tick = now, position = data.position_m, speed = speed,
+            began = now, travel = 0, expected = 0, ratio = 1}
+        return
+    end
+    if dt <= 0 then return end
+    local dx, dy = data.position_m[1] - p.position[1], data.position_m[2] - p.position[2]
+    p.travel = p.travel + math.sqrt(dx * dx + dy * dy)
+    p.expected = p.expected + (speed + p.speed) / 7.2 * dt
+    p.tick, p.position, p.speed = now, data.position_m, speed
+    local span = elapsed(now, p.began)
+    if span >= 1000 and p.expected > 1 then
+        p.measuredRatio, p.wallSpeed = p.travel / p.expected, p.travel * 3600 / span
+        local ratio = clamp(p.measuredRatio, 0.35, 1)
+        p.ratio = p.ratio + (ratio - p.ratio) * (ratio < p.ratio and 0.7 or 0.25)
+        p.windowMs, p.observed = span, now
+        p.began, p.travel, p.expected = now, 0, 0
+    end
+end
+
+function Controller:rolloutPlan(data)
+    local nav, timer = data.navigation, data.waypoint_timer
+    local forward = data.velocity_body_rfu_mps and data.velocity_body_rfu_mps[2]
+    if not self.flightSeen or data.on_ground ~= true or data.frozen == true
+        or self.instruction == "reverse" or self.instruction == "passengers" or self.instruction == "wait_clearance"
+        or not finite(forward) or forward < 0 or type(nav) ~= "table" or nav.ambiguous
+        or nav.marker_type ~= "ring" or nav.marker_inside == true
+        or not vector(nav.position) or not vector(nav.next_position)
+        or not finite(nav.distance_2d_m) or not finite(nav.marker_size_m) or nav.marker_size_m <= 0 or nav.marker_size_m > 60
+        or not finite(nav.heading_error_deg) or math.abs(nav.heading_error_deg) > 5
+        or not finite(nav.altitude_error_m) or math.abs(nav.altitude_error_m) > 5
+        or not finite(data.agl_terrain_m) or data.agl_terrain_m > 3
+        or math.abs(data.roll_deg or 0) > 5 or math.abs(data.heading_rate_dps or 0) > 3
+        or not finite(nav.bearing_deg) or type(timer) ~= "table" or not finite(timer.remaining_s)
+        or timer.remaining_s <= 0 or not finite(timer.age_ms) or timer.age_ms > 2500 then return end
+    local dx, dy = nav.next_position[1] - nav.position[1], nav.next_position[2] - nav.position[2]
+    if dx * dx + dy * dy < 25 then return end
+    local nextTurn = math.abs(angle(math.deg(math.atan2(dx, dy)) - nav.bearing_deg))
+    local entry = nextTurn > 35 and 12 or nextTurn > 15 and 18 or nextTurn > 5 and 26 or 35
+    local remaining = math.max(0, nav.distance_2d_m - nav.marker_size_m + 2)
+    local ratio = self.groundProgress and self.groundProgress.ratio or 1
+    -- Five seconds for timing variation, plus time lost slowing from the maximum rollout speed.
+    local reserve = 5 + (55 - entry)^2 / (2 * 1.8 * 55 * 3.6)
+    local required = remaining * 3.6 / (math.max(1, timer.remaining_s - reserve) * ratio)
+    local brakingDistance = math.max(0, nav.distance_2d_m - nav.marker_size_m - data.speed_kmh / 3.6 * 0.5 - 5)
+    local cap = math.min(55, math.sqrt((entry / 3.6)^2 + 2 * 1.8 * brakingDistance) * 3.6)
+    local speed = math.min(cap, math.max(35, required))
+    return {speed = speed, cap = cap, required = required, entry = entry, remaining = remaining,
+        seconds = timer.remaining_s, reserve = reserve, ratio = ratio, nextTurn = nextTurn,
+        margin = timer.remaining_s - remaining * 3.6 / math.max(1, speed * ratio), limited = required > cap}
+end
+
 function Controller:groundIntent(data, now)
     local nav = data.navigation
     local error = type(nav) == "table" and finite(nav.heading_error_deg) and nav.heading_error_deg or 0
-    if self.finalLanding and self.flightSeen and data.on_ground == true and data.speed_kmh > 35 and self.landingHeading then
+    local rollout = self:rolloutPlan(data)
+    if self.finalLanding and self.flightSeen and data.on_ground == true
+        and data.speed_kmh > (rollout and rollout.speed + 1 or 35) and self.landingHeading then
         local steering = angle(self.landingHeading - data.heading_deg)
         local rate = self.filteredRates and self.filteredRates.yaw or 0
         local rudder = clamp((clamp(steering * 0.8, -3, 3) - rate * 0.3) / 8.8, -0.3, 0.3)
-        return {direction = 1, steering = steering, speed = 0, yaw = 8.8 * rudder,
-            rudder = rudder, landing_rollout = true}
+        return {direction = 1, steering = steering, speed = rollout and rollout.speed or 0, yaw = 8.8 * rudder,
+            rudder = rudder, landing_rollout = true, rollout = rollout}
     end
     local reentry = self:taxiReentryIntent(data, now)
     local pending = not reentry and self.pushbackPending and elapsed(now, self.pushbackNoticeTick) < 250
@@ -214,6 +275,7 @@ function Controller:groundIntent(data, now)
     local entryLimit
     if not reentry and not reverse and math.abs(steering) <= 5 then
         speed = 35
+        if rollout then speed = rollout.speed end
         if type(nav) == "table" and nav.marker_type == "checkpoint" and finite(nav.marker_size_m)
             and nav.marker_size_m > 0 and finite(nav.distance_2d_m) then
             local remaining = math.max(0, nav.distance_2d_m - nav.marker_size_m - data.speed_kmh / 3.6 * 0.35)
@@ -255,7 +317,8 @@ function Controller:groundIntent(data, now)
     return {direction = reverse and -1 or 1, steering = steering, speed = speed,
         align = align, pending = pending, yaw = yaw, runway = runway, runway_align = runwayAlign, rudder = runwayRudder,
         reentry = reentry and reentry.recovery,
-        marker_entry_speed_limit = entryLimit, held_rudder = heldRudder, predicted_steering_error = predicted}
+        marker_entry_speed_limit = entryLimit, held_rudder = heldRudder, predicted_steering_error = predicted,
+        rollout = rollout}
 end
 
 function Controller:update(data, now, pathClear, probeStatus)
@@ -295,6 +358,7 @@ function Controller:update(data, now, pathClear, probeStatus)
     end
     self.lastPosition = data.position_m
     self.controlReady = true
+    self:updateGroundProgress(data, now)
     if data.on_ground then
         self.groundSince, self.airSince = self.groundSince or now, nil
         if elapsed(now, self.groundSince) >= 300 then self.airborne = false end
@@ -381,6 +445,18 @@ function Controller:update(data, now, pathClear, probeStatus)
     local takeoff = ground and takeoffAllowed and not self.flightSeen and nav.marker_type == "ring"
     if ground and not takeoff then
         local intent = self:groundIntent(data, now)
+        local rollout, progress = intent.rollout, self.groundProgress
+        if progress then
+            self.detail.ground_progress_ratio, self.detail.ground_wall_speed_kmh = progress.ratio, progress.wallSpeed
+            self.detail.ground_progress_measured_ratio, self.detail.ground_progress_window_ms = progress.measuredRatio, progress.windowMs
+        end
+        if rollout then
+            self.detail.rollout_remaining_s, self.detail.rollout_remaining_m = rollout.seconds, rollout.remaining
+            self.detail.rollout_time_reserve_s = rollout.reserve
+            self.detail.rollout_required_speed_kmh, self.detail.rollout_speed_cap_kmh = rollout.required, rollout.cap
+            self.detail.rollout_entry_speed_kmh, self.detail.rollout_next_turn_deg = rollout.entry, rollout.nextTurn
+            self.detail.rollout_linear_margin_s, self.detail.rollout_deadline_limited = rollout.margin, rollout.limited
+        end
         if intent.reentry then
             local recovery = intent.reentry
             self.detail.taxi_reentry_stage, self.detail.taxi_reentry_reason = recovery.stage, recovery.reason
@@ -390,11 +466,13 @@ function Controller:update(data, now, pathClear, probeStatus)
             self.detail.taxi_reentry_inside, self.detail.taxi_reentry_failure = nav.marker_inside, recovery.failure
             if recovery.failure then return self:stop(recovery.failure .. ": ручной перехват") end
         end
-        if intent.landing_rollout then
+        local uncertainLandingPath = self.finalLanding and self.flightSeen and data.on_ground == true
+            and data.speed_kmh > 35 and pathClear ~= true
+        if intent.landing_rollout or uncertainLandingPath then
             self.phase, self.status = "landing_rollout", "Касание: торможение по направлению полосы"
-            out.brake, out.rudder, out.gear_down = 1, intent.rudder, true
+            out.brake, out.rudder, out.gear_down = 1, intent.rudder or 0, true
             self.detail.landing_stage, self.detail.landing_heading_deg = "rollout", self.landingHeading
-            self.detail.goal_speed_kmh, self.detail.steering_error_deg = 0, intent.steering
+            self.detail.goal_speed_kmh, self.detail.steering_error_deg = uncertainLandingPath and 0 or intent.speed, intent.steering
             self.detail.goal_yaw_dps = intent.yaw
             self.output = out
             return out
@@ -727,7 +805,7 @@ end)()
 -- END EMBEDDED PILOT CONTROLLER
 
 -- Flight recorder and opt-in local-player controller. Navigation uses live elements.
-local VERSION = "1.2.16"
+local VERSION = "1.2.17"
 local native = {log = dfPilotLog, update = dfPilotUpdate, command = dfPilotTakeCommand,
     alert = dfPlayAlertSignal, alertMonitor = dfSetAlertMonitorEnabled}
 for _, name in ipairs({"log", "update", "command", "alert", "alertMonitor"}) do
@@ -1257,6 +1335,7 @@ local function navigationSample(position, velocity, basis, now)
         nav.element_alpha = read("getElementAlpha", state.target)
         nav.marker_type = read("getMarkerType", state.target)
         nav.marker_size_m = read("getMarkerSize", state.target)
+        nav.next_position = nav.marker_type == "ring" and vector("getMarkerTarget", state.target) or NULL
         local playerInside = read("isElementWithinMarker", localPlayer, state.target)
         local vehicleInside
         if valid(state.vehicle) then vehicleInside = read("isElementWithinMarker", state.vehicle, state.target) end
@@ -1301,6 +1380,7 @@ local function sample(now, frameMs, input)
     local vehicle = read("getPedOccupiedVehicle", localPlayer)
     if not valid(vehicle) then vehicle = nil end
     if state.vehicle ~= vehicle then
+        if state.vehicle then state.waypointTimer = nil end
         emit("vehicle_change", {old = state.vehicle and elementId(state.vehicle) or NULL,
             new = vehicle and elementId(vehicle) or NULL}, true)
         state.vehicle, state.previous, state.lastScan = vehicle, nil, nil
@@ -1316,6 +1396,12 @@ local function sample(now, frameMs, input)
         phase = state.phase, controls = input, vehicle = vehicle and elementId(vehicle) or NULL,
         window_minimized = state.minimized == true, window_restored = state.windowRestored == true,
         update_source = state.backgroundTick and "background_timer" or "pre_render"}
+    local timer = state.waypointTimer
+    if timer then
+        local age = elapsed(now, timer.tick)
+        item.waypoint_timer = {source = timer.source, channel = timer.channel, reported_s = timer.seconds,
+            age_ms = age, remaining_s = math.max(0, timer.seconds - age / 1000)}
+    end
     item.control_held_ms = {}
     for _, name in ipairs(controls) do
         if input.digital[name] == true and state.controlSince[name] then
@@ -2450,7 +2536,42 @@ local function notificationText(value, depth, output)
     return output
 end
 
+local function observeWaypointTimer(channel, payload, origin)
+    if origin ~= "province_pilot" or type(payload) ~= "table" then return end
+    local now, timer = getTickCount(), state.waypointTimer
+    local args = payload.arguments and payload.arguments.values or {}
+    local seconds, sourceId, kind
+    local function waypointText(text)
+        return type(text) == "string" and text:find("Достигните следующей точки", 1, true) ~= nil
+    end
+    if channel == "plrTimer:init" then
+        state.waypointTimer = nil
+        if args[2] ~= "Пилот" or not waypointText(args[3]) then return end
+        seconds, sourceId, kind = args[1], payload.source, "event"
+    elseif channel == "plrTimer:secs" then
+        if not timer or timer.kind ~= "event" or timer.source ~= payload.source then return end
+        if args[1] == timer.seconds then return end
+        seconds, sourceId, kind = args[1], timer.source, "event"
+    elseif channel == "plrTimer:updateText" then
+        if timer and timer.source == payload.source and not waypointText(args[1]) then state.waypointTimer = nil end
+        return
+    elseif channel == "static_snapshot" or channel == "static_change" then
+        if timer and timer.kind == "event" and elapsed(now, timer.tick) <= 2500 then return end
+        local data = payload.data
+        if type(data) ~= "table" or data.header ~= "Пилот" or not waypointText(data.text)
+            or data.timer ~= true or not finite(data.min) or not finite(data.sec) then
+            if timer and timer.source == payload.id then state.waypointTimer = nil end
+            return
+        end
+        seconds, sourceId, kind = data.min * 60 + data.sec, payload.id, "static"
+        if timer and timer.source == sourceId and timer.seconds == seconds then return end
+    else return end
+    if not finite(seconds) or seconds < 0 or seconds > 600 or type(sourceId) ~= "string" then return end
+    state.waypointTimer = {source = sourceId, channel = channel, kind = kind, seconds = seconds, tick = now}
+end
+
 local function notification(channel, payload, origin, text)
+    observeWaypointTimer(channel, payload, origin)
     if type(text) ~= "string" then text = table.concat(notificationText(payload), "\n") end
     local plain = text:gsub("#%x%x%x%x%x%x", "")
     local trusted = origin == "province_pilot" and channel == "province:sendNotification"
@@ -2486,6 +2607,8 @@ local function notification(channel, payload, origin, text)
         -- Duplicate completion events must not cancel or repeat an employment request.
         if state.nextJob and plain:find("Вы выполнили рейс", 1, true) then return end
         local mode = autopilot:notify(plain, now)
+        if mode == "boarding_move" or mode == "passengers" or mode == "wait_clearance"
+            or mode == "completed" or mode == "job_ended" then state.waypointTimer = nil end
         if mode == "completed" or mode == "job_ended" then
             local repeatJob = mode == "completed" and working and state.autonomy
             if repeatJob then emit("autonomy_queued", {reason = "route_completed", wait_for_exit = true}, true) end
@@ -2556,7 +2679,7 @@ installNotificationObservers = function()
 end
 
 hook("onClientElementDataChange", root, function(key)
-    if not state.recording then return end
+    if not state.recording and not autopilot.enabled then return end
     if key == "data" and read("getElementType", source) == "notifications:Static" then
         notificationElement(source, "static_change")
     elseif source == root and key == "notifications:groups" then pollNotifications() end
@@ -2611,6 +2734,7 @@ for _, event in ipairs({"onClientMarkerHit", "onClientMarkerLeave"}) do
     end)
 end
 hook("onClientElementDestroy", root, function()
+    if state.waypointTimer and state.waypointTimer.source == elementId(source) then state.waypointTimer = nil end
     if state.notificationSeen[source] then
         local owner = ownership(source)
         local previous = state.notificationSeen[source]
