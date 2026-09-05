@@ -17,9 +17,9 @@ class AutonomyTests(unittest.TestCase):
     def complete(self):
         self.run_lua("event('province:sendNotification',pilotRoot,'Вы выполнили рейс! Заработано: 18808 р.')")
 
-    def test_defaults_do_not_record_or_render_and_do_not_accept_without_a_flight(self):
+    def test_defaults_enable_ap_telemetry_but_do_not_record_before_a_flight(self):
         self.run_lua('step(12)')
-        self.assertEqual(self.lua.eval("ui.autopilot_autonomy,ui.autopilot_hud,ui.autopilot_telemetry"), ('0','0','0'))
+        self.assertEqual(self.lua.eval("ui.autopilot_autonomy,ui.autopilot_hud,ui.autopilot_telemetry"), ('0','0','1'))
         self.complete()
         self.run_lua('occupied=nil; step(60)')
         self.assertEqual(self.lua.eval('#serverEvents'), 0)

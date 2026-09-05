@@ -3,7 +3,7 @@ local PilotController = (function()
 -- Pure controller: no game APIs, resource loading or server events.
 local Controller = {}
 Controller.__index = Controller
-Controller.version = "0.1.8"
+Controller.version = "0.1.9"
 
 local function finite(v) return type(v) == "number" and v == v and math.abs(v) < math.huge end
 local function clamp(v, low, high) return math.max(low, math.min(high, v)) end
@@ -14,7 +14,7 @@ local function vector(v) return type(v) == "table" and finite(v[1]) and finite(v
 
 function Controller.new()
     return setmetatable({enabled = false, instruction = "unknown", phase = "off", status = "Выключен",
-        output = neutral(), telemetry = false, waypoint = 0}, Controller)
+        output = neutral(), telemetry = true, waypoint = 0}, Controller)
 end
 
 function Controller:stop(reason)
@@ -84,7 +84,7 @@ function Controller:start(data, now)
     self.groundDirection = forward < -0.25 and -1 or forward > 0.25 and 1 or self.instruction == "reverse" and -1 or 1
     self.directionSettled, self.pushbackPending, self.pushback = nil, false, false
     self.parkingHold = nil
-    self.turnDirection = nil
+    self.turnDirection, self.ringPass = nil, nil
     self.groundSteerReleased = nil
     self.finalLanding, self.landingHeading = false, nil
     self.contactAgl = data.on_ground == true and finite(data.agl_terrain_m)
@@ -253,7 +253,7 @@ function Controller:update(data, now, pathClear, probeStatus)
         self.waypoint = self.waypoint + 1
         self.navId, self.navType = nav.id, nav.marker_type
         self.navPosition = {nav.position[1], nav.position[2], nav.position[3]}
-        self.closest, self.passedSince = nil, nil
+        self.closest, self.passedSince, self.ringPass = nil, nil, nil
         self.parkingHold = nil
     end
     self.detail.waypoint, self.detail.marker_changed = self.waypoint, changed
@@ -437,10 +437,6 @@ function Controller:update(data, now, pathClear, probeStatus)
         out.gear_down = true
     else
         self.closest = math.min(self.closest or math.huge, nav.distance_3d_m)
-        if not (self.landing and nav.marker_type == "checkpoint") and nav.distance_3d_m > self.closest + 15 and math.abs(error) > 95 then
-            self.passedSince = self.passedSince or now
-            if elapsed(now, self.passedSince) > 350 then return self:stop("Маркер остался позади: ручной перехват") end
-        else self.passedSince = nil end
         local descendingTarget = finite(nav.altitude_error_m) and nav.altitude_error_m < -2
         if self.flightSeen and self.descendingWaypoints >= 3 and agl and agl < 170 and descendingTarget
             and finite(data.surface and data.surface.ground_z_m)
@@ -459,25 +455,72 @@ function Controller:update(data, now, pathClear, probeStatus)
             courseError = angle(self.landingHeading - (finite(data.track_deg) and data.track_deg or data.heading_deg))
         end
         local horizontalSpeed = finite(data.horizontal_speed_kmh) and data.horizontal_speed_kmh / 3.6 or data.speed_kmh / 3.6
+        local trim = data.speed_kmh > 220 and -1.4 or -0.7
+        local captureMargin = finite(nav.marker_size_m) and math.max(0, nav.marker_size_m * 0.45) or 0
+        local track = finite(data.track_deg) and data.track_deg
+            or finite(nav.track_error_deg) and angle(nav.bearing_deg - nav.track_error_deg) or data.heading_deg
+        local trackError = angle(nav.bearing_deg - track)
+        local alongTrack = nav.distance_2d_m * math.cos(math.rad(trackError))
+        local crossTrack = nav.distance_2d_m * math.sin(math.rad(trackError))
+        local verticalMiss = nav.altitude_error_m - data.climb_mps * alongTrack / math.max(1, horizontalSpeed)
+        local miss3d = math.sqrt(crossTrack^2 + verticalMiss^2)
+        if not self.ringPass and nav.marker_type == "ring" and not self.finalLanding and vector(data.position_m)
+            and captureMargin > 0 and data.speed_kmh > 100 and alongTrack > 0
+            and nav.distance_2d_m < math.max(captureMargin * 2, horizontalSpeed * 0.75)
+            and math.abs(trackError) < 10 and math.abs(data.roll_deg) < 12 and math.abs(yawRate) < 4
+            and miss3d < captureMargin then
+            -- Keep the incoming course through the capture corridor until the server moves the ring.
+            self.ringPass = {heading = track, pitch = clamp(math.deg(math.atan2(nav.altitude_error_m,
+                nav.distance_2d_m)) + trim, -23, 22), started = now}
+        end
+        local pass = self.ringPass
+        if pass and (not vector(data.position_m) or self.finalLanding or captureMargin <= 0) then
+            self.ringPass, pass = nil, nil
+        end
+        if pass then
+            local heading = math.rad(pass.heading)
+            local along = (nav.position[1] - data.position_m[1]) * math.sin(heading)
+                + (nav.position[2] - data.position_m[2]) * math.cos(heading)
+            if not pass.crossed and (miss3d > captureMargin * 1.5 or math.abs(angle(pass.heading - track)) > 20
+                or elapsed(now, pass.started) > 2500) then
+                self.ringPass, pass = nil, nil
+            else
+                if along <= 0 then pass.crossed = pass.crossed or now end
+                self.detail.ring_along_m, self.detail.ring_exit_wait_ms = along, elapsed(now, pass.crossed)
+                self.detail.ring_path_heading_deg, self.detail.ring_path_pitch_deg = pass.heading, pass.pitch
+                if pass.crossed and elapsed(now, pass.crossed) > 1500 then
+                    return self:stop("Нет следующего кольца после пролёта: ручной перехват")
+                end
+            end
+        end
+        self.detail.ring_flythrough, self.detail.predicted_miss_3d_m = pass ~= nil, miss3d
+        if not pass and not (self.landing and nav.marker_type == "checkpoint")
+            and nav.distance_3d_m > self.closest + 15 and math.abs(error) > 95 then
+            self.passedSince = self.passedSince or now
+            if elapsed(now, self.passedSince) > 350 then return self:stop("Маркер остался позади: ручной перехват") end
+        else self.passedSince = nil end
         local interceptDistance = math.max(40, nav.distance_2d_m, horizontalSpeed * 1.2)
         local turnRate = 2 * horizontalSpeed / interceptDistance * math.sin(math.rad(clamp(courseError, -75, 75)))
         local wantedYaw = math.deg(turnRate)
         if changed or not self.turnDirection then self.turnDirection = courseError < 0 and -1 or 1 end
-        local captureMargin = finite(nav.marker_size_m) and math.max(0, nav.marker_size_m * 0.45) or 0
-        local crossTrack = nav.distance_2d_m * math.abs(math.sin(math.rad(courseError)))
         local ringCapture = nav.marker_type == "ring" and captureMargin > 0 and math.abs(courseError) < 15
-            and nav.distance_2d_m < horizontalSpeed * 1.2 and crossTrack < captureMargin
+            and nav.distance_2d_m < horizontalSpeed * 1.2 and math.abs(crossTrack) < captureMargin
             and courseError * self.turnDirection < 0
         -- Inside the capture corridor, roll out instead of reversing bank to chase centimetres.
         if ringCapture then turnRate, wantedYaw = 0, 0 end
+        if pass then
+            local drift = angle(pass.heading - track)
+            wantedYaw = clamp((drift < 0 and -1 or 1) * math.max(0, math.abs(drift) - 0.75) * 1.5, -3, 3)
+            turnRate, ringCapture = math.rad(wantedYaw), true
+            if pass.crossed then self.status = "Пролёт кольца: ожидание новой цели" end
+        end
         local bankLimit = self.landing and 25 or agl and clamp(12 + math.max(0, agl - 5) * 0.8, 12, 50) or 25
         local requiredBank = math.deg(math.atan2(horizontalSpeed * turnRate, 9.81))
         local goalRoll = clamp(requiredBank, -bankLimit, bankLimit)
         local lookahead = 0.35
         local elevation = math.deg(math.atan2(nav.altitude_error_m - data.climb_mps * lookahead,
             math.max(20, nav.distance_2d_m - horizontalSpeed * math.cos(math.rad(courseError)) * lookahead)))
-        local trim = data.speed_kmh > 220 and -1.4 or -0.7
-        local goalPitch = clamp(elevation + trim, -23, 22)
+        local goalPitch = pass and pass.pitch or clamp(elevation + trim, -23, 22)
         local goalSpeed = self.landing and agl and clamp(125 + math.max(0, agl - 8) * 1.25, 125, 245)
             or clamp(255 - math.max(0, math.abs(goalRoll) - 15) * 1.2, 210, 255)
         if self.finalLanding and agl then
@@ -521,7 +564,7 @@ function Controller:update(data, now, pathClear, probeStatus)
         if self.landing then out.gear_down = true
         elseif agl and agl > 8 and elapsed(now, self.airSince) > 1000 then out.gear_down = false end
         self.detail.goal_roll_deg, self.detail.goal_pitch_deg, self.detail.goal_speed_kmh = goalRoll, goalPitch, goalSpeed
-        self.detail.guidance, self.detail.course_error_deg = "curvature_intercept", courseError
+        self.detail.guidance, self.detail.course_error_deg = pass and "ring_flythrough" or "curvature_intercept", courseError
         self.detail.goal_turn_rate_dps, self.detail.command_turn_rate_dps = wantedYaw, yawCommand
         self.detail.required_bank_deg, self.detail.bank_limit_deg = requiredBank, bankLimit
         self.detail.intercept_distance_m = interceptDistance
@@ -545,7 +588,7 @@ end)()
 -- END EMBEDDED PILOT CONTROLLER
 
 -- Flight recorder and opt-in local-player controller. Navigation uses live elements.
-local VERSION = "1.2.12"
+local VERSION = "1.2.13"
 local native = {log = dfPilotLog, update = dfPilotUpdate, command = dfPilotTakeCommand,
     alert = dfPlayAlertSignal, alertMonitor = dfSetAlertMonitorEnabled}
 for _, name in ipairs({"log", "update", "command", "alert", "alertMonitor"}) do
@@ -717,55 +760,55 @@ end
 
 local SERVER_ADMINS = {
     ["185.71.66.80:22003"] = [[
-Emily_Quincy Dmitriy_Ogonkov Alim_Komarov Jack_Morozov Sergey_Streltsov Adrian_Litvintsev
-Alex_Morrison Alexander_Grozniy Andrey_Semp Andrey_Valyaev Artem_Augustov Artemiy_Lisiuk
-Egor_Sobakevich Ivan_Gryb Kamilla_Florenz Maksim_Harlamow Melody_Wayne Nestor_Rutherford
-Nick_Kotik Vladimir_Smash Wolfgang_Schneiderhan Yuriy_Sokolovskiy Johnny_Smith Kiyotaki_Darkness
-Pavel_Toporov David_Seliverstov Ivan_Prahodskiy Matthew_Rutherford Veynar_Halvardsen Aleksey_Bombovich2]],
+Emily_Quincy Dmitriy_Ogonkov Alim_Komarov Jack_Morozov Nestor_Rutherford Ivan_Prahodskiy
+Vladimir_Smash Adrian_Litvintsev Aleksey_Elin Alex_Morrison Andrey_Valyaev Artem_Pankov
+Artemiy_Lisiuk Egor_Sobakevich Eric_Morris Ethan_Santoro Kamilla_Florenz Melody_Wayne
+Nick_Kotik Sergey_Gromenko Tyler_Quincy Wolfgang_Schneiderhan Stepan_Vorobyev Diego_Yezhov
+Ivan_Lambert Kirill_Yezhov Kiyotaki_Darkness Milan_Mikasso Milka_Morris Yve_Furley
+Ayato_Enfield Egor_Svarov Fedor_Salnikov]],
     ["185.71.66.70:22003"] = [[
-Maria_Alekseeva Rodion_Topolskiy Alexander_Krutov Arseniy_Maltsev William_Great Alexander_Gasanov
-Antonio_Zubenko Ksenia_Groznaya Franklin_White Daniil_Lantratov Evgeny_Grossman Illya_Santiz
-Jack_Turner Vladislav_Alen Ludwig_Salvatore Timofey_Fabin Karolina_Kaspiyskaya Leo_Guerra Max_Dante
-Roman_Lisov Vladislav_Townley Maxim_Gornadzorov Maksim_Alferov Mia_Krutova Aleksandr_Grozniy
-Aleksandr_Biketov Don_Vice Daniil_Wolskiy Dmitriy_Ostrovskiy Nik_Romadin Pablo_King
-Vyacheslav_Rublev Dmitry_Pretty Stefan_King Danil_Naumow Tony_King Kita_Kayman Reimondo_Grossman]],
+Maria_Alekseeva Alexander_Krutov Aleksandr_Grozniy Aleksandr_Kartavtsev Alexey_Krutov Daniil_Lantratov
+Crow_Green Avrora_Groznaya Dmitry_Pretty Don_Vice Jack_Turner Leo_King
+Danila_Flaneks Roman_Lisov Vladislav_Townley Vyacheslav_Rublev Mihail_Tomato Mayson_McKenzy
+Aleksandr_Biketov Illya_Santiz Daniil_Burdin Tony_King Mia_Krutova Rodion_Topolskiy
+Aleksey_Korsakov Egor_Tkach Mauricio_Garcia Max_Gyf Vyacheslav_Lefortnikov Mark_Thompson
+Igor_Samarskiy Andrei_King Vladislav_Kraskov Arseniy_Maltsev Alexander_Gasanov Antonio_Zubenko
+Dmitriy_Ostrovskiy Franklin_White Maxim_Gornadzorov Pablo_King]],
     ["185.71.66.79:22003"] = [[
-Vladislav_Kiselev Eric_Collins Danil_Astov Dmitriy_Scheglov Eduard_Vysotskiy Fedor_Khalifa
-Prokhor_Lukoyanov Vladislav_Sutagin Alex_Trushin Alexandr_Yankee Alina_Solntsevskaya
-Anastasia_Crossman Dmitriy_Dennica George_Gaiduk Ivan_Ryzov Kirill_Mirnyy Marat_Sorokin
-Radmir_Pyatkin Rodion_Vistnik Sergei_Black Thomas_Barinov Vladislav_Macalister Walter_Neal
-Balthazar_Moskov Elisey_Marlboro Francesco_Grizzly Mironu_Kataray Sergei_Yamrazh Daniil_Shock
-Ilya_Anillov Roman_Ray Aaron_Campbell Artur_Iskandarov Aurora_Vlasova Danil_Moskov Daniil_Tairov
-Egor_Hill Jevgeni_Djagilev Maksim_Kancler Richard_Frank Yuko_Mori]],
+Arnold_Fenix Eric_Collins Danil_Astov Dmitriy_Scheglov Eduard_Vysotskiy Fedor_Khalifa
+Prokhor_Lukoyanov Rodion_Vistnik Vladislav_Sutagin Alex_Trushin Alexandr_Yankee Alina_Solntsevskaya
+Dmitriy_Dennica Ivan_Ryzov Kirill_Mirnyy Nika_Ryzova Ramiz_White Richard_Volsky
+Sergei_Black Thomas_Freiman Vladislav_Macalister Dmitrii_Mihailov Dmitriy_Eagle Ilya_Sovietsky
+Leonardo_Eliseev Andrew_Harin Artur_Eclipse Kirill_Shpilkov Markus_Haineken]],
     ["185.71.66.64:22003"] = [[
-Claus_Nevskiy Anastasia_MacAlister Sevil_Esposito Melissa_Witty Evgeniy_Holmes Serg_Antonov
-Augustine_Morgan Artem_Fedukov Pavel_Morello Robert_Dobrov Mirella_Mayers Varlam_Bobko
-Matthew_Esposito Anthony_Manrique Benjamin_Watson Alexander_Potok Dmitriy_Prostorov Saburo_Itto
-Anatoliy_Vercetti Nick_Tverskoy Yaroslav_Mayers Xavier_Manchine Vasiliy_Tverskoy Anna_Tverskaya
-Anatoliy_Nesterov Anton_Sambur Ali_Henderson Maximilian_Watanabe Chad_Morgan Floren_Winners
-Aman_Dubrovskiy Kirill_Reall Norman_Excellent]],
+Claus_Nevskiy Anastasia_MacAlister Pavel_Morello Melissa_Witty Augustine_Morgan Evgeniy_Holmes
+Artem_Fedukov Matthew_Esposito Mirella_Mayers Pavel_Belin Anna_Tverskaya Chad_Morgan
+Kaito_Watanabe Saburo_Itto Anthony_Manrique Vasiliy_Tverskoy Varlam_Bobko Dmitriy_Prostorov
+Robert_Dobrov Nick_Tverskoy Pablo_Moore Noah_Don Avram_Gagarin Oleg_Reall
+Matthew_Dobrov Hiroyuki_Sanada Eric_Grand Egor_Derugin Anthony_Morgan Alexandr_Prospectiv
+Darya_Roy Tihon_Medvedev]],
     ["185.71.66.66:22003"] = [[
-Platon_Seven Kai_Mironov Alexandr_Silych Daniil_Caffrey Dmitriy_Polanski Gottfried_Boyarin
-Sergey_Belikov Aleksey_Khrusch Alex_Gutmann Alex_Vatkov Alexandr_Venevtsev Artem_Tyhkanov
-Diana_Creighton Dmitriy_Repin Dmitry_Tomin Emmanuel_Deus Mitsuo_Fox Robert_Sychev
-Rostislav_Imenov Alex_Robinson Alexander_McCartney Amin_Cherry Danil_Polaneychick Aleksandr_McLaren
-Artem_Bobrovskiy Giuseppe_Gazdeliani Mark_Andrusenko Artem_Rose Konstantin_Kurochkin Mehad_Still]],
+Platon_Seven Kai_Mironov Alexandr_Silych Artem_Tyhkanov Daniil_Caffrey Dmitriy_Polanski
+Alena_Loginova Alex_Gutmann Alexandr_Venevtsev Alexandr_Wigman Diana_Creighton Igor_Wallker
+James_Moriarty Jesus_Lauren Konstantin_Dort Kristina_Kozlovskaya Mason_Montana Rostislav_Imenov
+Ryan_Price Akim_Deville Alexander_McCartney Artem_Krasnovsky Robert_Sychev Konstantin_Quincy
+Nikolay_Lesnoi Ylia_Rios Yuriy_Kalashnikov Andrey_James Ekaterina_MacCartney Kimi_Benzo]],
     ["185.71.66.81:22003"] = [[
-Denis_Manafort Andrey_Novak Markus_Berg Elizaveta_Berg Alexander_Good Paul_Good David_Bystrov
-Artem_Darmin Georgiy_Zhilin Maksim_KuIiy Arthur_Daniels Averardo_Capone Vladislav_Manarskiy
-Polter_Sokirovskiy Oliver_Capone Savva_Sharkov Hades_Manarskiy Andrew_Maguire Shiro_Vi Sergey_Berg
-Osiris_Reinhardt Egoriy_Bobryshev Yuriy_Topolskin Hugo_Wolf Agato_Massino Andrey_Loverd
-Ilya_Bobryshev Emmanuel_Capone Vladislav_Verkalo Lee_Capone Selvester_Loverd Shai_Massino
-Ajay_Jackson Monte_Good August_Hoffmann Dany_Good Moki_Nellson Attaviano_Capone Mike_McCoy Vadim_Good]],
+Denis_Manafort Andrey_Novak Markus_Berg Elizaveta_Berg Georgiy_Zhilin Arthur_Daniels
+Artem_Darmin Oliver_Capone Sergius_Vorobeyov Osiris_Reinhardt Yuriy_Topolskin Hugo_Wolf
+Lee_Capone Monte_Good Vadim_Good Paul_Hegg Bavar_Bavarskiy Tyler_Hamilton
+Artem_Watkowski Ruby_Bavarskiy Rudolf_Bavarskiy Han_Manarskiy Vladislav_Berg Ralph_Versace
+Averardo_Manarskiy Andrey_Tambovskiy Mike_Fisher Sergey_Berg Astride_Capone Oscar_Nellson
+Mino_Damone Gottschalk_Reinhardt Yaroslav_Laskov Ademar_Manarskiy Rem_Hiyama Ksenia_Atevon
+Toti_Tykan Luka_Kakhovsky Maksim_Benz Marty_McCoy Neo_McCoy Saron_McCoy
+Vasilii_Sokolov Averardo_Capone]],
     ["185.71.66.88:22003"] = [[
-Anthony_Paris Arnold_Fenix Stanislav_Zybinskiy Artemiy_Kornyakov Leonid_Bosow Ivan_Homyakov
-Anton_Marshalov Artemiy_Mikado Denis_Milize Anton_Zalutcki Daniel_Harrington Aleksey_Novgorodskiy
-Wyatt_Yeat Nikolay_Bosow Jet_Rakhimov August_Verstappen Kevin_Reichelderfer Mark_Admiralov
-Michael_Mikado Sergey_Sheremetev Mars_Holmes Valentin_Mikado Zagid_Mikado Nathaniel_Revazov
-Felix_Kogut Lina_Reichelderfer Daniele_Homyakov Nikolay_Wolf Potap_Hennessy Fedor_Santoni
-Matteo_Williams Cary_Mikado Maxim_Sharganov Aleksey_Akimov Chapman_Navarro Pavel_Homyakov
-Arsenii_Harrington Ryan_Lindberg Hariton_Bosow Anthony_Verov Mark_Lotkov Nikita_Muver Ethan_Mikado
-Christopher_Winchester Khavr_Zakharov]],
+Anthony_Paris Artemiy_Kornyakov Igor_Navarro Pavel_Borushko Nikita_Kavalev Leonid_Bosow
+Ivan_Homyakov Anton_Marshalov Denis_Milize Anatoliy_Mayskiy Nikolay_Bosow Felix_Kogut
+Sergey_Sheremetev Aleksiy_Kotz Juster_Hillton Amina_Muver Mitrofan_Prostakov Kevin_Kasper
+Victor_Ellington Evgeniy_Stepanov Otto_Vlasov Denis_Fadeev Potap_Pride August_Verstappen
+Vladislav_Rotov Anton_Zalutcki Daniel_Harrington Kevin_Reichelderfer Mars_Holmes Maxim_Sharganov
+Nikita_Muver Aquamarine_Vercetti Daniele_Homyakov Pavel_Homyakov]],
 }
 local knownAdmins = {}
 for nick in tostring(SERVER_ADMINS[read("getServerIp", true)] or ""):gmatch("%S+") do

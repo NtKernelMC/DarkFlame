@@ -517,7 +517,7 @@ void DrawPilotTelemetry(ImVec2 position, ImVec2 size, float scale)
     at(32, 188);
     if(ImGui::Checkbox("Автономность (BETA)", &autonomy)) Queue(autonomy ? "autopilot_autonomy:1" : "autopilot_autonomy:0");
     at(32, 215);
-    if(ImGui::Checkbox("Телеметрия автопилота", &autopilotTelemetry)) Queue(autopilotTelemetry ? "autopilot_telemetry:1" : "autopilot_telemetry:0");
+    if(ImGui::Checkbox("Чёрный Ящик", &autopilotTelemetry)) Queue(autopilotTelemetry ? "autopilot_telemetry:1" : "autopilot_telemetry:0");
     at(32, 242);
     if(ImGui::Checkbox("Отладочный HUD", &autopilotHud)) Queue(autopilotHud ? "autopilot_hud:1" : "autopilot_hud:0");
     ImGui::EndDisabled();

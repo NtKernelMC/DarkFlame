@@ -1,0 +1,3086 @@
+{
+  "source": "Downloads/PilotTelemetry.log",
+  "sha256": "6dfad8a90689bd9ae177df8723d1dfda50b2cef40e795cef7d4629cfa6691e46",
+  "run": "1788623902_2927684",
+  "observed_minimum_m": 41.81108782,
+  "previous_ring": [
+    7431.422852,
+    -3852.028076,
+    76.95400238
+  ],
+  "next_ring": [
+    7521.672852,
+    -4086.308105,
+    114.7350006
+  ],
+  "previous_entry": {
+    "vehicle": "e547",
+    "driver": true,
+    "model": 519,
+    "dimension": 0,
+    "interior": 0,
+    "heading_deg": 137.5249183,
+    "pitch_deg": 3.541642777,
+    "roll_deg": 10.062728,
+    "speed_kmh": 236.5285407,
+    "climb_mps": 4.716421291,
+    "heading_rate_dps": 0.945127959,
+    "pitch_rate_dps": -2.98996128,
+    "roll_rate_dps": -49.9345051,
+    "on_ground": false,
+    "agl_terrain_m": 54.1820755,
+    "health": 998.5854492,
+    "position_m": [
+      7279.594727,
+      -3654.075195,
+      54.1820755
+    ],
+    "horizontal_speed_kmh": 235.9183337,
+    "velocity_body_rfu_mps": [
+      1.857341592,
+      65.6684891,
+      1.001005525
+    ],
+    "velocity_world_mps": [
+      42.75380969,
+      -49.66557026,
+      4.716421291
+    ],
+    "landing_gear_down": false,
+    "surface": {
+      "ground_z_m": 0,
+      "tick_ms": 3385509,
+      "water_z_m": 0
+    },
+    "track_deg": 139.2770127,
+    "navigation": {
+      "altitude_error_m": 22.77192688,
+      "ambiguous": false,
+      "bearing_deg": 142.51211,
+      "body_pitch_to_center_deg": 2.528522111,
+      "body_yaw_to_center_deg": 4.598623983,
+      "closing_mps": 65.58628432,
+      "color_rgba": [
+        255,
+        0,
+        0,
+        128
+      ],
+      "current_heading_deg": 137.5249183,
+      "delta_body_rfu_m": [
+        20.06514964,
+        249.4612981,
+        11.05171559
+      ],
+      "delta_world_m": [
+        151.828125,
+        -197.9528809,
+        22.77192688
+      ],
+      "distance_2d_m": 249.4736912,
+      "distance_3d_m": 250.5108445,
+      "element_alpha": 128,
+      "elevation_deg": 5.215498326,
+      "eta_linear_s": 3.81956147,
+      "heading_error_deg": 4.987191703,
+      "id": "e657",
+      "kind": "marker",
+      "marker_inside": false,
+      "marker_size_m": 30,
+      "marker_type": "ring",
+      "player_inside_marker": false,
+      "position": [
+        7431.422852,
+        -3852.028076,
+        76.95400238
+      ],
+      "scan_age_ms": 0,
+      "selection": "sticky_rank_then_nearest_observer",
+      "target_age_ms": 0,
+      "track_deg": 139.2770127,
+      "track_error_deg": 3.235097265,
+      "turn_direction": "right",
+      "turn_remaining_deg": 4.987191703,
+      "vehicle_inside_marker": false,
+      "waypoint_generation": 46
+    },
+    "tick_ms": 3385679,
+    "elapsed_ms": 457995
+  },
+  "late_target_entry": {
+    "vehicle": "e547",
+    "driver": true,
+    "model": 519,
+    "dimension": 0,
+    "interior": 0,
+    "heading_deg": 142.5213826,
+    "pitch_deg": -1.00766208,
+    "roll_deg": -7.798928971,
+    "speed_kmh": 252.3040022,
+    "climb_mps": 1.190419588,
+    "heading_rate_dps": -6.269565035,
+    "pitch_rate_dps": -2.484473668,
+    "roll_rate_dps": -47.39206419,
+    "on_ground": false,
+    "agl_terrain_m": 77.71080017,
+    "health": 998.5854492,
+    "position_m": [
+      7448.067871,
+      -3875.040283,
+      77.71080017
+    ],
+    "horizontal_speed_kmh": 252.2676038,
+    "velocity_body_rfu_mps": [
+      1.393813953,
+      70.03432232,
+      2.254139116
+    ],
+    "velocity_world_mps": [
+      41.77964926,
+      -56.2572062,
+      1.190419588
+    ],
+    "landing_gear_down": false,
+    "surface": {
+      "ground_z_m": 0,
+      "tick_ms": 3389615,
+      "water_z_m": 0
+    },
+    "track_deg": 143.4004196,
+    "navigation": {
+      "altitude_error_m": 37.02420044,
+      "ambiguous": false,
+      "bearing_deg": 160.7918396,
+      "body_pitch_to_center_deg": 7.82154953,
+      "body_yaw_to_center_deg": 19.50744896,
+      "closing_mps": 66.16793201,
+      "color_rgba": [
+        255,
+        0,
+        0,
+        128
+      ],
+      "current_heading_deg": 142.5213826,
+      "delta_body_rfu_m": [
+        75.01918491,
+        211.7601454,
+        30.86010459
+      ],
+      "delta_world_m": [
+        73.60498047,
+        -211.2678223,
+        37.02420044
+      ],
+      "distance_2d_m": 223.7225645,
+      "distance_3d_m": 226.7654676,
+      "element_alpha": 128,
+      "elevation_deg": 9.396801846,
+      "eta_linear_s": 3.427120369,
+      "heading_error_deg": 18.270457,
+      "id": "e657",
+      "kind": "marker",
+      "marker_inside": false,
+      "marker_size_m": 30,
+      "marker_type": "ring",
+      "player_inside_marker": false,
+      "position": [
+        7521.672852,
+        -4086.308105,
+        114.7350006
+      ],
+      "scan_age_ms": 0,
+      "selection": "sticky_rank_then_nearest_observer",
+      "target_age_ms": 0,
+      "track_deg": 143.4004196,
+      "track_error_deg": 17.39141995,
+      "turn_direction": "right",
+      "turn_remaining_deg": 18.270457,
+      "vehicle_inside_marker": false,
+      "waypoint_generation": 47
+    },
+    "tick_ms": 3389670,
+    "elapsed_ms": 461986
+  },
+  "capture_window": [
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.3296372,
+      "pitch_deg": 4.573209809,
+      "roll_deg": -0.5605175505,
+      "speed_kmh": 255.1665261,
+      "climb_mps": 7.363025099,
+      "heading_rate_dps": 0.3160732563,
+      "pitch_rate_dps": -0.02322602425,
+      "roll_rate_dps": 4.015502227,
+      "on_ground": false,
+      "agl_terrain_m": 67.47241974,
+      "health": 998.5854492,
+      "position_m": [
+        7376.597168,
+        -3778.21875,
+        67.47241974
+      ],
+      "horizontal_speed_kmh": 253.7860138,
+      "velocity_body_rfu_mps": [
+        0.3974024636,
+        70.85772993,
+        1.715003595
+      ],
+      "velocity_world_mps": [
+        41.79511666,
+        -56.77033067,
+        7.363025099
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3387789,
+        "water_z_m": 0
+      },
+      "track_deg": 143.6389765,
+      "navigation": {
+        "altitude_error_m": 9.481582642,
+        "ambiguous": false,
+        "bearing_deg": 143.3949769,
+        "body_pitch_to_center_deg": 1.313829844,
+        "body_yaw_to_center_deg": 0.0778710831,
+        "closing_mps": 70.87889405,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.3296372,
+        "delta_body_rfu_m": [
+          0.125591153,
+          92.40706943,
+          2.119328204
+        ],
+        "delta_world_m": [
+          54.82568359,
+          -73.80932617,
+          9.481582642
+        ],
+        "distance_2d_m": 91.94385358,
+        "distance_3d_m": 92.43144822,
+        "element_alpha": 128,
+        "elevation_deg": 5.887735816,
+        "eta_linear_s": 1.304075768,
+        "heading_error_deg": 0.06533973142,
+        "heading_error_rate_dps": -0.4984004777,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 0,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 2290,
+        "track_deg": 143.6389765,
+        "track_error_deg": -0.2439995456,
+        "turn_direction": "right",
+        "turn_remaining_deg": 0.06533973142,
+        "turn_remaining_rate_dps": -0.4984004777,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3387967,
+      "elapsed_ms": 460283
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.3465228,
+      "pitch_deg": 4.5801299,
+      "roll_deg": -0.3718398434,
+      "speed_kmh": 255.2860406,
+      "climb_mps": 7.358881831,
+      "heading_rate_dps": 0.3015278401,
+      "pitch_rate_dps": 0.1235730618,
+      "roll_rate_dps": 3.36924477,
+      "on_ground": false,
+      "agl_terrain_m": 67.88673401,
+      "health": 998.5854492,
+      "position_m": [
+        7378.950195,
+        -3781.414307,
+        67.88673401
+      ],
+      "horizontal_speed_kmh": 253.9077348,
+      "velocity_body_rfu_mps": [
+        0.3587770299,
+        70.89147326,
+        1.701115165
+      ],
+      "velocity_world_mps": [
+        41.82504714,
+        -56.79028034,
+        7.358881831
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388022,
+        "water_z_m": 0
+      },
+      "track_deg": 143.6290045,
+      "navigation": {
+        "altitude_error_m": 9.067268372,
+        "ambiguous": false,
+        "bearing_deg": 143.3841875,
+        "body_pitch_to_center_deg": 1.304062188,
+        "body_yaw_to_center_deg": 0.04594295402,
+        "closing_mps": 70.91209252,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.3465228,
+        "delta_body_rfu_m": [
+          0.07089895714,
+          88.41856672,
+          2.012770605
+        ],
+        "delta_world_m": [
+          52.47265625,
+          -70.61376953,
+          9.067268372
+        ],
+        "distance_2d_m": 87.97547443,
+        "distance_3d_m": 88.44150302,
+        "element_alpha": 128,
+        "elevation_deg": 5.884461732,
+        "eta_linear_s": 1.247199171,
+        "heading_error_deg": 0.03766471998,
+        "heading_error_rate_dps": -0.4941966328,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 56,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 2346,
+        "track_deg": 143.6290045,
+        "track_error_deg": -0.2448169867,
+        "turn_direction": "right",
+        "turn_remaining_deg": 0.03766471998,
+        "turn_remaining_rate_dps": -0.4941966328,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388023,
+      "elapsed_ms": 460339
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.3628985,
+      "pitch_deg": 4.594489081,
+      "roll_deg": -0.2437397681,
+      "speed_kmh": 255.4003119,
+      "climb_mps": 7.366202772,
+      "heading_rate_dps": 0.2775551999,
+      "pitch_rate_dps": 0.2433759426,
+      "roll_rate_dps": 2.171187718,
+      "on_ground": false,
+      "agl_terrain_m": 68.31386566,
+      "health": 998.5854492,
+      "position_m": [
+        7381.376953,
+        -3784.708984,
+        68.31386566
+      ],
+      "horizontal_speed_kmh": 254.0198762,
+      "velocity_body_rfu_mps": [
+        0.3259197105,
+        70.92367668,
+        1.689061012
+      ],
+      "velocity_world_mps": [
+        41.85075462,
+        -56.81003332,
+        7.366202772
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388022,
+        "water_z_m": 0
+      },
+      "track_deg": 143.621708,
+      "navigation": {
+        "altitude_error_m": 8.640136719,
+        "ambiguous": false,
+        "bearing_deg": 143.372402,
+        "body_pitch_to_center_deg": 1.286274231,
+        "body_yaw_to_center_deg": 0.01493085977,
+        "closing_mps": 70.94379925,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.3628985,
+        "delta_body_rfu_m": [
+          0.02196955554,
+          84.30611505,
+          1.8929668
+        ],
+        "delta_world_m": [
+          50.04589844,
+          -67.3190918,
+          8.640136719
+        ],
+        "distance_2d_m": 83.88356258,
+        "distance_3d_m": 84.3273623,
+        "element_alpha": 128,
+        "elevation_deg": 5.880815296,
+        "eta_linear_s": 1.188650216,
+        "heading_error_deg": 0.009503440059,
+        "heading_error_rate_dps": -0.4773098293,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 115,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 2405,
+        "track_deg": 143.621708,
+        "track_error_deg": -0.2493060387,
+        "turn_direction": "right",
+        "turn_remaining_deg": 0.009503440059,
+        "turn_remaining_rate_dps": -0.4773098293,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388081,
+      "elapsed_ms": 460397
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.3771731,
+      "pitch_deg": 4.611901765,
+      "roll_deg": -0.1868988406,
+      "speed_kmh": 255.4997942,
+      "climb_mps": 7.370781153,
+      "heading_rate_dps": 0.2693307761,
+      "pitch_rate_dps": 0.3285412065,
+      "roll_rate_dps": 1.07247033,
+      "on_ground": false,
+      "agl_terrain_m": 68.70893097,
+      "health": 998.5854492,
+      "position_m": [
+        7383.620605,
+        -3787.753906,
+        68.70893097
+      ],
+      "horizontal_speed_kmh": 254.1181783,
+      "velocity_body_rfu_mps": [
+        0.3005327442,
+        70.9518734,
+        1.670266651
+      ],
+      "velocity_world_mps": [
+        41.87192917,
+        -56.82834983,
+        7.370781153
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388022,
+        "water_z_m": 0
+      },
+      "track_deg": 143.6166883,
+      "navigation": {
+        "altitude_error_m": 8.245071411,
+        "ambiguous": false,
+        "bearing_deg": 143.3609311,
+        "body_pitch_to_center_deg": 1.265074388,
+        "body_yaw_to_center_deg": -0.01203257203,
+        "closing_mps": 70.97138877,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.3771731,
+        "delta_body_rfu_m": [
+          -0.01690668019,
+          80.50493306,
+          1.777814797
+        ],
+        "delta_world_m": [
+          47.80224609,
+          -64.27416992,
+          8.245071411
+        ],
+        "distance_2d_m": 80.10133364,
+        "distance_3d_m": 80.52456056,
+        "element_alpha": 128,
+        "elevation_deg": 5.876929633,
+        "eta_linear_s": 1.134605958,
+        "heading_error_deg": -0.01624197852,
+        "heading_error_rate_dps": -0.4857626146,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 168,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 2458,
+        "track_deg": 143.6166883,
+        "track_error_deg": -0.2557572426,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.01624197852,
+        "turn_remaining_rate_dps": 0.127142235,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388134,
+      "elapsed_ms": 460450
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.391782,
+      "pitch_deg": 4.632781568,
+      "roll_deg": -0.168004461,
+      "speed_kmh": 255.6030546,
+      "climb_mps": 7.392872125,
+      "heading_rate_dps": 0.2562963005,
+      "pitch_rate_dps": 0.366312338,
+      "roll_rate_dps": 0.3314803425,
+      "on_ground": false,
+      "agl_terrain_m": 69.13889313,
+      "health": 998.5854492,
+      "position_m": [
+        7386.058105,
+        -3791.062256,
+        69.13889313
+      ],
+      "horizontal_speed_kmh": 254.2136866,
+      "velocity_body_rfu_mps": [
+        0.2763900152,
+        70.98080172,
+        1.664445964
+      ],
+      "velocity_world_mps": [
+        41.89223945,
+        -56.84633851,
+        7.392872125
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388022,
+        "water_z_m": 0
+      },
+      "track_deg": 143.6120792,
+      "navigation": {
+        "altitude_error_m": 7.815109253,
+        "ambiguous": false,
+        "bearing_deg": 143.3470167,
+        "body_pitch_to_center_deg": 1.239066125,
+        "body_yaw_to_center_deg": -0.04090655911,
+        "closing_mps": 70.99997768,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.391782,
+        "delta_body_rfu_m": [
+          -0.05452823576,
+          76.37497043,
+          1.651926529
+        ],
+        "delta_world_m": [
+          45.36474609,
+          -60.96582031,
+          7.815109253
+        ],
+        "distance_2d_m": 75.9920485,
+        "distance_3d_m": 76.39284893,
+        "element_alpha": 128,
+        "elevation_deg": 5.871721247,
+        "eta_linear_s": 1.075955957,
+        "heading_error_deg": -0.04476523641,
+        "heading_error_rate_dps": -0.5004080332,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 225,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 2515,
+        "track_deg": 143.6120792,
+        "track_error_deg": -0.2650625271,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.04476523641,
+        "turn_remaining_rate_dps": 0.5004080332,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388192,
+      "elapsed_ms": 460508
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.4045337,
+      "pitch_deg": 4.651398167,
+      "roll_deg": -0.1733116859,
+      "speed_kmh": 255.6919561,
+      "climb_mps": 7.407853007,
+      "heading_rate_dps": 0.2318505525,
+      "pitch_rate_dps": 0.3384836194,
+      "roll_rate_dps": -0.09649499681,
+      "on_ground": false,
+      "agl_terrain_m": 69.5378952,
+      "health": 998.5854492,
+      "position_m": [
+        7388.316406,
+        -3794.126221,
+        69.5378952
+      ],
+      "horizontal_speed_kmh": 254.2974238,
+      "velocity_body_rfu_mps": [
+        0.2559758658,
+        71.0058194,
+        1.654458808
+      ],
+      "velocity_world_mps": [
+        41.90998971,
+        -56.86215162,
+        7.407853007
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388246,
+        "water_z_m": 0
+      },
+      "track_deg": 143.6080981,
+      "navigation": {
+        "altitude_error_m": 7.416107178,
+        "ambiguous": false,
+        "bearing_deg": 143.3332626,
+        "body_pitch_to_center_deg": 1.214594861,
+        "body_yaw_to_center_deg": -0.06723759576,
+        "closing_mps": 71.02457667,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.4045337,
+        "delta_body_rfu_m": [
+          -0.08513803915,
+          72.54941265,
+          1.538183217
+        ],
+        "delta_world_m": [
+          43.10644531,
+          -57.90185547,
+          7.416107178
+        ],
+        "distance_2d_m": 72.18580535,
+        "distance_3d_m": 72.56575735,
+        "element_alpha": 128,
+        "elevation_deg": 5.865780527,
+        "eta_linear_s": 1.021699259,
+        "heading_error_deg": -0.07127109781,
+        "heading_error_rate_dps": -0.4819247527,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 0,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 2570,
+        "track_deg": 143.6080981,
+        "track_error_deg": -0.2748355019,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.07127109781,
+        "turn_remaining_rate_dps": 0.4819247527,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388247,
+      "elapsed_ms": 460563
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.4156096,
+      "pitch_deg": 4.665588881,
+      "roll_deg": -0.1882570974,
+      "speed_kmh": 255.7711597,
+      "climb_mps": 7.44690448,
+      "heading_rate_dps": 0.2171740914,
+      "pitch_rate_dps": 0.2782493003,
+      "roll_rate_dps": -0.2930472844,
+      "on_ground": false,
+      "agl_terrain_m": 69.90701294,
+      "health": 998.5854492,
+      "position_m": [
+        7390.396973,
+        -3796.948242,
+        69.90701294
+      ],
+      "horizontal_speed_kmh": 254.3622837,
+      "velocity_body_rfu_mps": [
+        0.2382710349,
+        71.02741285,
+        1.674316481
+      ],
+      "velocity_world_mps": [
+        41.92438424,
+        -56.87392354,
+        7.44690448
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388246,
+        "water_z_m": 0
+      },
+      "track_deg": 143.6043656,
+      "navigation": {
+        "altitude_error_m": 7.046989441,
+        "ambiguous": false,
+        "bearing_deg": 143.319641,
+        "body_pitch_to_center_deg": 1.193141144,
+        "body_yaw_to_center_deg": -0.0915692017,
+        "closing_mps": 71.04640589,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.4156096,
+        "delta_body_rfu_m": [
+          -0.1103152273,
+          69.02529938,
+          1.437609145
+        ],
+        "delta_world_m": [
+          41.02587891,
+          -55.07983398,
+          7.046989441
+        ],
+        "distance_2d_m": 68.67977032,
+        "distance_3d_m": 69.04035713,
+        "element_alpha": 128,
+        "elevation_deg": 5.858416315,
+        "eta_linear_s": 0.9717642471,
+        "heading_error_deg": -0.09596864585,
+        "heading_error_rate_dps": -0.4842656477,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 51,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 2621,
+        "track_deg": 143.6043656,
+        "track_error_deg": -0.2847246117,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.09596864585,
+        "turn_remaining_rate_dps": 0.4842656477,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388297,
+      "elapsed_ms": 460613
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.4272404,
+      "pitch_deg": 4.676670815,
+      "roll_deg": -0.209460605,
+      "speed_kmh": 255.8505581,
+      "climb_mps": 7.461278141,
+      "heading_rate_dps": 0.2194486134,
+      "pitch_rate_dps": 0.2090930939,
+      "roll_rate_dps": -0.4000661814,
+      "on_ground": false,
+      "agl_terrain_m": 70.3172226,
+      "health": 998.5854492,
+      "position_m": [
+        7392.703613,
+        -3800.076904,
+        70.3172226
+      ],
+      "horizontal_speed_kmh": 254.4366644,
+      "velocity_body_rfu_mps": [
+        0.219384477,
+        71.04956361,
+        1.673198488
+      ],
+      "velocity_world_mps": [
+        41.94085002,
+        -56.88745379,
+        7.461278141
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388246,
+        "water_z_m": 0
+      },
+      "track_deg": 143.6001293,
+      "navigation": {
+        "altitude_error_m": 6.636779785,
+        "ambiguous": false,
+        "bearing_deg": 143.302816,
+        "body_pitch_to_center_deg": 1.172244138,
+        "body_yaw_to_center_deg": -0.1195169389,
+        "closing_mps": 71.06831042,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.4272404,
+        "delta_body_rfu_m": [
+          -0.1358340528,
+          65.11802198,
+          1.332472287
+        ],
+        "delta_world_m": [
+          38.71923828,
+          -51.95117188,
+          6.636779785
+        ],
+        "distance_2d_m": 64.79277485,
+        "distance_3d_m": 65.13179345,
+        "element_alpha": 128,
+        "elevation_deg": 5.848458837,
+        "eta_linear_s": 0.9164674532,
+        "heading_error_deg": -0.1244243474,
+        "heading_error_rate_dps": -0.5369000285,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 104,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 2674,
+        "track_deg": 143.6001293,
+        "track_error_deg": -0.2973132277,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.1244243474,
+        "turn_remaining_rate_dps": 0.5369000285,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388351,
+      "elapsed_ms": 460667
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.4387963,
+      "pitch_deg": 4.68191283,
+      "roll_deg": -0.2336022113,
+      "speed_kmh": 255.9335785,
+      "climb_mps": 7.482095808,
+      "heading_rate_dps": 0.1958634909,
+      "pitch_rate_dps": 0.08884770514,
+      "roll_rate_dps": -0.4091797677,
+      "on_ground": false,
+      "agl_terrain_m": 70.75182343,
+      "health": 998.5854492,
+      "position_m": [
+        7395.141602,
+        -3803.383301,
+        70.75182343
+      ],
+      "horizontal_speed_kmh": 254.5122257,
+      "velocity_body_rfu_mps": [
+        0.200094936,
+        71.07239431,
+        1.685717155
+      ],
+      "velocity_world_mps": [
+        41.95801318,
+        -56.90087676,
+        7.482095808
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388246,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5953889,
+      "navigation": {
+        "altitude_error_m": 6.202178955,
+        "ambiguous": false,
+        "bearing_deg": 143.2829282,
+        "body_pitch_to_center_deg": 1.154276801,
+        "body_yaw_to_center_deg": -0.1503867461,
+        "closing_mps": 71.09115673,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.4387963,
+        "delta_body_rfu_m": [
+          -0.1600790831,
+          60.98831862,
+          1.22883692
+        ],
+        "delta_world_m": [
+          36.28125,
+          -48.64477539,
+          6.202178955
+        ],
+        "distance_2d_m": 60.68478619,
+        "distance_3d_m": 61.00090408,
+        "element_alpha": 128,
+        "elevation_deg": 5.835549542,
+        "eta_linear_s": 0.8580659942,
+        "heading_error_deg": -0.1558680992,
+        "heading_error_rate_dps": -0.5329449469,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 163,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 2733,
+        "track_deg": 143.5953889,
+        "track_error_deg": -0.3124607168,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.1558680992,
+        "turn_remaining_rate_dps": 0.5329449469,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388410,
+      "elapsed_ms": 460726
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.4486787,
+      "pitch_deg": 4.680543452,
+      "roll_deg": -0.2538289845,
+      "speed_kmh": 256.0029873,
+      "climb_mps": 7.487387955,
+      "heading_rate_dps": 0.1864592876,
+      "pitch_rate_dps": -0.02583732423,
+      "roll_rate_dps": -0.3816372304,
+      "on_ground": false,
+      "agl_terrain_m": 71.14661407,
+      "health": 998.5854492,
+      "position_m": [
+        7397.35498,
+        -3806.384033,
+        71.14661407
+      ],
+      "horizontal_speed_kmh": 254.5800055,
+      "velocity_body_rfu_mps": [
+        0.1830158649,
+        71.09159116,
+        1.69115742
+      ],
+      "velocity_world_mps": [
+        41.9736594,
+        -56.91273212,
+        7.487387955
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388462,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5908867,
+      "navigation": {
+        "altitude_error_m": 5.807388306,
+        "ambiguous": false,
+        "bearing_deg": 143.2630194,
+        "body_pitch_to_center_deg": 1.142190065,
+        "body_yaw_to_center_deg": -0.1796765623,
+        "closing_mps": 71.11025535,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.4486787,
+        "delta_body_rfu_m": [
+          -0.1795014576,
+          57.23975399,
+          1.141229988
+        ],
+        "delta_world_m": [
+          34.06787109,
+          -45.64404297,
+          5.807388306
+        ],
+        "distance_2d_m": 56.95611029,
+        "distance_3d_m": 57.25141272,
+        "element_alpha": 128,
+        "elevation_deg": 5.821901946,
+        "eta_linear_s": 0.8051076802,
+        "heading_error_deg": -0.1856593174,
+        "heading_error_rate_dps": -0.562098457,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 216,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 2786,
+        "track_deg": 143.5908867,
+        "track_error_deg": -0.3278673576,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.1856593174,
+        "turn_remaining_rate_dps": 0.562098457,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388462,
+      "elapsed_ms": 460778
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.4593897,
+      "pitch_deg": 4.669446884,
+      "roll_deg": -0.270031214,
+      "speed_kmh": 256.0795901,
+      "climb_mps": 7.504942268,
+      "heading_rate_dps": 0.1785173176,
+      "pitch_rate_dps": -0.1849427984,
+      "roll_rate_dps": -0.2700371588,
+      "on_ground": false,
+      "agl_terrain_m": 71.60247803,
+      "health": 998.5854492,
+      "position_m": [
+        7399.90625,
+        -3809.842773,
+        71.60247803
+      ],
+      "horizontal_speed_kmh": 254.6503394,
+      "velocity_body_rfu_mps": [
+        0.1637409363,
+        71.11221446,
+        1.720869143
+      ],
+      "velocity_world_mps": [
+        41.99066162,
+        -56.92446828,
+        7.504942268
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388462,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5854457,
+      "navigation": {
+        "altitude_error_m": 5.351524353,
+        "ambiguous": false,
+        "bearing_deg": 143.2366247,
+        "body_pitch_to_center_deg": 1.134516982,
+        "body_yaw_to_center_deg": -0.2163194724,
+        "closing_mps": 71.13121964,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.4593897,
+        "delta_body_rfu_m": [
+          -0.1997950975,
+          52.91877487,
+          1.047992102
+        ],
+        "delta_world_m": [
+          31.51660156,
+          -42.18530273,
+          5.351524353
+        ],
+        "distance_2d_m": 52.65829413,
+        "distance_3d_m": 52.92952629,
+        "element_alpha": 128,
+        "elevation_deg": 5.802896879,
+        "eta_linear_s": 0.7441110466,
+        "heading_error_deg": -0.2227650627,
+        "heading_error_rate_dps": -0.618429087,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 0,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 2846,
+        "track_deg": 143.5854457,
+        "track_error_deg": -0.3488210037,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.2227650627,
+        "turn_remaining_rate_dps": 0.618429087,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388523,
+      "elapsed_ms": 460839
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.4693584,
+      "pitch_deg": 4.648513556,
+      "roll_deg": -0.2759647831,
+      "speed_kmh": 256.1505031,
+      "climb_mps": 7.509410381,
+      "heading_rate_dps": 0.1634205303,
+      "pitch_rate_dps": -0.3431692991,
+      "roll_rate_dps": -0.09727162489,
+      "on_ground": false,
+      "agl_terrain_m": 72.05484772,
+      "health": 998.5854492,
+      "position_m": [
+        7402.436523,
+        -3813.272461,
+        72.05484772
+      ],
+      "horizontal_speed_kmh": 254.7199437,
+      "velocity_body_rfu_mps": [
+        0.1450654756,
+        71.13124736,
+        1.749807731
+      ],
+      "velocity_world_mps": [
+        42.00754762,
+        -56.93603754,
+        7.509410381
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388462,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5800031,
+      "navigation": {
+        "altitude_error_m": 4.899154663,
+        "ambiguous": false,
+        "bearing_deg": 143.2062342,
+        "body_pitch_to_center_deg": 1.133136687,
+        "body_yaw_to_center_deg": -0.2563828702,
+        "closing_mps": 71.15058289,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.4693584,
+        "delta_body_rfu_m": [
+          -0.2176237558,
+          48.63366845,
+          0.9619614603
+        ],
+        "delta_world_m": [
+          28.98632812,
+          -38.75561523,
+          4.899154663
+        ],
+        "distance_2d_m": 48.39633179,
+        "distance_3d_m": 48.64367016,
+        "element_alpha": 128,
+        "elevation_deg": 5.780353619,
+        "eta_linear_s": 0.6836721245,
+        "heading_error_deg": -0.2631242047,
+        "heading_error_rate_dps": -0.6616252796,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 61,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 2907,
+        "track_deg": 143.5800031,
+        "track_error_deg": -0.3737689388,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.2631242047,
+        "turn_remaining_rate_dps": 0.6616252796,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388583,
+      "elapsed_ms": 460899
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.4786886,
+      "pitch_deg": 4.618143006,
+      "roll_deg": -0.2706374721,
+      "speed_kmh": 256.2218785,
+      "climb_mps": 7.505343109,
+      "heading_rate_dps": 0.1555039539,
+      "pitch_rate_dps": -0.5061758476,
+      "roll_rate_dps": 0.08878851662,
+      "on_ground": false,
+      "agl_terrain_m": 72.50738525,
+      "health": 998.5854492,
+      "position_m": [
+        7404.966797,
+        -3816.701416,
+        72.50738525
+      ],
+      "horizontal_speed_kmh": 254.793273,
+      "velocity_body_rfu_mps": [
+        0.1269947534,
+        71.15032271,
+        1.781913953
+      ],
+      "velocity_world_mps": [
+        42.02493131,
+        -56.94852471,
+        7.505343109
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388462,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5746806,
+      "navigation": {
+        "altitude_error_m": 4.446617126,
+        "ambiguous": false,
+        "bearing_deg": 143.1705442,
+        "body_pitch_to_center_deg": 1.136519755,
+        "body_yaw_to_center_deg": -0.3012866139,
+        "closing_mps": 71.17001617,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.4786886,
+        "delta_body_rfu_m": [
+          -0.2332092092,
+          44.34906717,
+          0.8798361785
+        ],
+        "delta_world_m": [
+          26.45605469,
+          -35.32666016,
+          4.446617126
+        ],
+        "distance_2d_m": 44.13497193,
+        "distance_3d_m": 44.35840564,
+        "element_alpha": 128,
+        "elevation_deg": 5.753160379,
+        "eta_linear_s": 0.623273789,
+        "heading_error_deg": -0.308144443,
+        "heading_error_rate_dps": -0.7503373045,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 121,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 2967,
+        "track_deg": 143.5746806,
+        "track_error_deg": -0.4041363942,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.308144443,
+        "turn_remaining_rate_dps": 0.7503373045,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388643,
+      "elapsed_ms": 460959
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.4881387,
+      "pitch_deg": 4.574018676,
+      "roll_deg": -0.2519612408,
+      "speed_kmh": 256.2964282,
+      "climb_mps": 7.496868819,
+      "heading_rate_dps": 0.1453868634,
+      "pitch_rate_dps": -0.6788358423,
+      "roll_rate_dps": 0.2873266352,
+      "on_ground": false,
+      "agl_terrain_m": 72.99676514,
+      "health": 998.5854492,
+      "position_m": [
+        7407.710938,
+        -3820.419434,
+        72.99676514
+      ],
+      "horizontal_speed_kmh": 254.8714729,
+      "velocity_body_rfu_mps": [
+        0.1082183751,
+        71.16993235,
+        1.826647056
+      ],
+      "velocity_world_mps": [
+        42.04325974,
+        -56.96199536,
+        7.496868819
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388708,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5692186,
+      "navigation": {
+        "altitude_error_m": 3.957237244,
+        "ambiguous": false,
+        "bearing_deg": 143.123801,
+        "body_pitch_to_center_deg": 1.146621061,
+        "body_yaw_to_center_deg": -0.357558676,
+        "closing_mps": 71.19017371,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.4881387,
+        "delta_body_rfu_m": [
+          -0.2477727941,
+          39.70299713,
+          0.7946703584
+        ],
+        "delta_world_m": [
+          23.71191406,
+          -31.60864258,
+          3.957237244
+        ],
+        "distance_2d_m": 39.51406274,
+        "distance_3d_m": 39.71172221,
+        "element_alpha": 128,
+        "elevation_deg": 5.718964266,
+        "eta_linear_s": 0.5578258928,
+        "heading_error_deg": -0.3643377073,
+        "heading_error_rate_dps": -0.864511758,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 186,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3032,
+        "track_deg": 143.5692186,
+        "track_error_deg": -0.445417535,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.3643377073,
+        "turn_remaining_rate_dps": 0.864511758,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388708,
+      "elapsed_ms": 461024
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.4954035,
+      "pitch_deg": 4.520278511,
+      "roll_deg": -0.2274311695,
+      "speed_kmh": 256.3519741,
+      "climb_mps": 7.451181114,
+      "heading_rate_dps": 0.1370709518,
+      "pitch_rate_dps": -1.013965367,
+      "roll_rate_dps": 0.4628315357,
+      "on_ground": false,
+      "agl_terrain_m": 73.39373779,
+      "health": 998.5854492,
+      "position_m": [
+        7409.946777,
+        -3823.448242,
+        73.39373779
+      ],
+      "horizontal_speed_kmh": 254.9446884,
+      "velocity_body_rfu_mps": [
+        0.09371803785,
+        71.1848879,
+        1.846350427
+      ],
+      "velocity_world_mps": [
+        42.05923975,
+        -56.97547793,
+        7.451181114
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388708,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5652943,
+      "navigation": {
+        "altitude_error_m": 3.560264587,
+        "ambiguous": false,
+        "bearing_deg": 143.077279,
+        "body_pitch_to_center_deg": 1.168768353,
+        "body_yaw_to_center_deg": -0.4115136651,
+        "closing_mps": 71.20522154,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.4954035,
+        "delta_body_rfu_m": [
+          -0.2579769702,
+          35.91797478,
+          0.7328061381
+        ],
+        "delta_world_m": [
+          21.47607422,
+          -28.57983398,
+          3.560264587
+        ],
+        "distance_2d_m": 35.74952691,
+        "distance_3d_m": 35.92637135,
+        "element_alpha": 128,
+        "elevation_deg": 5.687284637,
+        "eta_linear_s": 0.5045468657,
+        "heading_error_deg": -0.4181245389,
+        "heading_error_rate_dps": -1.01484588,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 239,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3085,
+        "track_deg": 143.5652943,
+        "track_error_deg": -0.4880152994,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.4181245389,
+        "turn_remaining_rate_dps": 1.01484588,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388762,
+      "elapsed_ms": 461078
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.5031113,
+      "pitch_deg": 4.413243748,
+      "roll_deg": -0.1920956003,
+      "speed_kmh": 256.4143282,
+      "climb_mps": 7.399689406,
+      "heading_rate_dps": 0.1306411889,
+      "pitch_rate_dps": -1.814148531,
+      "roll_rate_dps": 0.5989079524,
+      "on_ground": false,
+      "agl_terrain_m": 73.832901,
+      "health": 998.5854492,
+      "position_m": [
+        7412.439453,
+        -3826.824463,
+        73.832901
+      ],
+      "horizontal_speed_kmh": 255.0268176,
+      "velocity_body_rfu_mps": [
+        0.07860204953,
+        71.20010514,
+        1.926337724
+      ],
+      "velocity_world_mps": [
+        42.07660258,
+        -56.99101686,
+        7.399689406
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388708,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5614603,
+      "navigation": {
+        "altitude_error_m": 3.121101379,
+        "ambiguous": false,
+        "bearing_deg": 143.0128872,
+        "body_pitch_to_center_deg": 1.237648622,
+        "body_yaw_to_center_deg": -0.4838093673,
+        "closing_mps": 71.22190072,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.5031113,
+        "delta_body_rfu_m": [
+          -0.2676702347,
+          31.69845661,
+          0.6848506716
+        ],
+        "delta_world_m": [
+          18.98339844,
+          -25.20361328,
+          3.121101379
+        ],
+        "distance_2d_m": 31.55299572,
+        "distance_3d_m": 31.70698365,
+        "element_alpha": 128,
+        "elevation_deg": 5.649102322,
+        "eta_linear_s": 0.4451858675,
+        "heading_error_deg": -0.4902241604,
+        "heading_error_rate_dps": -1.222027483,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": false,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": false,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 0,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3144,
+        "track_deg": 143.5614603,
+        "track_error_deg": -0.5485731334,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.4902241604,
+        "turn_remaining_rate_dps": 1.222027483,
+        "vehicle_inside_marker": false,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388821,
+      "elapsed_ms": 461137
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.5099039,
+      "pitch_deg": 4.24709688,
+      "roll_deg": -0.1560934892,
+      "speed_kmh": 256.4748934,
+      "climb_mps": 7.305134833,
+      "heading_rate_dps": 0.1235004265,
+      "pitch_rate_dps": -3.020852157,
+      "roll_rate_dps": 0.654583838,
+      "on_ground": false,
+      "agl_terrain_m": 74.23248291,
+      "health": 998.5854492,
+      "position_m": [
+        7414.731934,
+        -3829.929443,
+        74.23248291
+      ],
+      "horizontal_speed_kmh": 255.1230304,
+      "velocity_body_rfu_mps": [
+        0.06582903047,
+        71.21389272,
+        2.036601931
+      ],
+      "velocity_world_mps": [
+        42.09527969,
+        -57.01044798,
+        7.305134833
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388708,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5586433,
+      "navigation": {
+        "altitude_error_m": 2.72151947,
+        "ambiguous": false,
+        "bearing_deg": 142.9365451,
+        "body_pitch_to_center_deg": 1.367239912,
+        "body_yaw_to_center_deg": -0.5670519808,
+        "closing_mps": 71.23806138,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.5099039,
+        "delta_body_rfu_m": [
+          -0.275319042,
+          27.81773915,
+          0.6639687515
+        ],
+        "delta_world_m": [
+          16.69091797,
+          -22.09863281,
+          2.72151947
+        ],
+        "distance_2d_m": 27.69361506,
+        "distance_3d_m": 27.82701894,
+        "element_alpha": 128,
+        "elevation_deg": 5.612575299,
+        "eta_linear_s": 0.3906201039,
+        "heading_error_deg": -0.5733587218,
+        "heading_error_rate_dps": -1.511537481,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": true,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": true,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 0,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3199,
+        "track_deg": 143.5586433,
+        "track_error_deg": -0.6220981217,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.5733587218,
+        "turn_remaining_rate_dps": 1.511537481,
+        "vehicle_inside_marker": true,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388876,
+      "elapsed_ms": 461192
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.5168348,
+      "pitch_deg": 3.976591576,
+      "roll_deg": -0.11627761,
+      "speed_kmh": 256.5442548,
+      "climb_mps": 7.157321274,
+      "heading_rate_dps": 0.1194983637,
+      "pitch_rate_dps": -4.663884543,
+      "roll_rate_dps": 0.6864806758,
+      "on_ground": false,
+      "agl_terrain_m": 74.6522522,
+      "health": 998.5854492,
+      "position_m": [
+        7417.186523,
+        -3833.25415,
+        74.6522522
+      ],
+      "horizontal_speed_kmh": 255.2470363,
+      "velocity_body_rfu_mps": [
+        0.05340016253,
+        71.22759881,
+        2.223014259
+      ],
+      "velocity_world_mps": [
+        42.11803377,
+        -57.03646541,
+        7.157321274
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388933,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5563398,
+      "navigation": {
+        "altitude_error_m": 2.301750183,
+        "ambiguous": false,
+        "bearing_deg": 142.8268411,
+        "body_pitch_to_center_deg": 1.604727113,
+        "body_yaw_to_center_deg": -0.6837355649,
+        "closing_mps": 71.25620333,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.5168348,
+        "delta_body_rfu_m": [
+          -0.2823879358,
+          23.66246499,
+          0.6629534667
+        ],
+        "delta_world_m": [
+          14.23632812,
+          -18.77392578,
+          2.301750183
+        ],
+        "distance_2d_m": 23.56126753,
+        "distance_3d_m": 23.67343198,
+        "element_alpha": 128,
+        "elevation_deg": 5.579640904,
+        "eta_linear_s": 0.3322297691,
+        "heading_error_deg": -0.6899936847,
+        "heading_error_rate_dps": -2.010947635,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": true,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": true,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 58,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3257,
+        "track_deg": 143.5563398,
+        "track_error_deg": -0.7294986805,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.6899936847,
+        "turn_remaining_rate_dps": 2.010947635,
+        "vehicle_inside_marker": true,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388933,
+      "elapsed_ms": 461249
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.5232332,
+      "pitch_deg": 3.611133365,
+      "roll_deg": -0.07719644833,
+      "speed_kmh": 256.6184221,
+      "climb_mps": 6.926262379,
+      "heading_rate_dps": 0.1122534047,
+      "pitch_rate_dps": -6.411547563,
+      "roll_rate_dps": 0.685634415,
+      "on_ground": false,
+      "agl_terrain_m": 75.05391693,
+      "health": 998.5854492,
+      "position_m": [
+        7419.603027,
+        -3836.526123,
+        75.05391693
+      ],
+      "horizontal_speed_kmh": 255.4041563,
+      "velocity_body_rfu_mps": [
+        0.04237612832,
+        71.2409764,
+        2.443986244
+      ],
+      "velocity_world_mps": [
+        42.14549661,
+        -57.07044005,
+        6.926262379
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388933,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5547971,
+      "navigation": {
+        "altitude_error_m": 1.900085449,
+        "ambiguous": false,
+        "bearing_deg": 142.6754496,
+        "body_pitch_to_center_deg": 1.957424933,
+        "body_yaw_to_center_deg": -0.8416396866,
+        "closing_mps": 71.27457825,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.5232332,
+        "delta_body_rfu_m": [
+          -0.2875347016,
+          19.57291245,
+          0.669011837
+        ],
+        "delta_world_m": [
+          11.81982422,
+          -15.50195312,
+          1.900085449
+        ],
+        "distance_2d_m": 19.49407077,
+        "distance_3d_m": 19.58645246,
+        "element_alpha": 128,
+        "elevation_deg": 5.567029643,
+        "eta_linear_s": 0.274802783,
+        "heading_error_deg": -0.8477836606,
+        "heading_error_rate_dps": -2.768245191,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": true,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": true,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 115,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3314,
+        "track_deg": 143.5547971,
+        "track_error_deg": -0.8793475196,
+        "turn_direction": "left",
+        "turn_remaining_deg": 0.8477836606,
+        "turn_remaining_rate_dps": 2.768245191,
+        "vehicle_inside_marker": true,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3388990,
+      "elapsed_ms": 461306
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.5290999,
+      "pitch_deg": 3.16128275,
+      "roll_deg": -0.03888167156,
+      "speed_kmh": 256.7068163,
+      "climb_mps": 6.601475179,
+      "heading_rate_dps": 0.1011492597,
+      "pitch_rate_dps": -7.75604508,
+      "roll_rate_dps": 0.6605995994,
+      "on_ground": false,
+      "agl_terrain_m": 75.43997192,
+      "health": 998.5854492,
+      "position_m": [
+        7422.032227,
+        -3839.814941,
+        75.43997192
+      ],
+      "horizontal_speed_kmh": 255.6043809,
+      "velocity_body_rfu_mps": [
+        0.03252413718,
+        71.25722427,
+        2.675918116
+      ],
+      "velocity_world_mps": [
+        42.17945039,
+        -57.11450577,
+        6.601475179
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388933,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5538804,
+      "navigation": {
+        "altitude_error_m": 1.514030457,
+        "ambiguous": false,
+        "bearing_deg": 142.4434765,
+        "body_pitch_to_center_deg": 2.452760256,
+        "body_yaw_to_center_deg": -1.07974319,
+        "closing_mps": 71.29319667,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.5290999,
+        "delta_body_rfu_m": [
+          -0.2914411505,
+          15.46327986,
+          0.6624858601
+        ],
+        "delta_world_m": [
+          9.390625,
+          -12.21313477,
+          1.514030457
+        ],
+        "distance_2d_m": 15.40598905,
+        "distance_3d_m": 15.48020629,
+        "element_alpha": 128,
+        "elevation_deg": 5.612745215,
+        "eta_linear_s": 0.2171344114,
+        "heading_error_deg": -1.085623394,
+        "heading_error_rate_dps": -4.100685054,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": true,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": true,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 173,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3372,
+        "track_deg": 143.5538804,
+        "track_error_deg": -1.110403971,
+        "turn_direction": "left",
+        "turn_remaining_deg": 1.085623394,
+        "turn_remaining_rate_dps": 4.100685054,
+        "vehicle_inside_marker": true,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3389048,
+      "elapsed_ms": 461364
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.5340972,
+      "pitch_deg": 2.676619536,
+      "roll_deg": -0.003619030461,
+      "speed_kmh": 256.8022497,
+      "climb_mps": 6.197473407,
+      "heading_rate_dps": 0.09254331572,
+      "pitch_rate_dps": -8.975244707,
+      "roll_rate_dps": 0.6530118723,
+      "on_ground": false,
+      "agl_terrain_m": 75.78755951,
+      "health": 998.5854492,
+      "position_m": [
+        7424.350586,
+        -3842.95459,
+        75.78755951
+      ],
+      "horizontal_speed_kmh": 255.8312314,
+      "velocity_body_rfu_mps": [
+        0.02424228113,
+        71.27611886,
+        2.872094158
+      ],
+      "velocity_world_mps": [
+        42.21726656,
+        -57.16491342,
+        6.197473407
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3388933,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5534979,
+      "navigation": {
+        "altitude_error_m": 1.166442871,
+        "ambiguous": false,
+        "bearing_deg": 142.0656155,
+        "body_pitch_to_center_deg": 3.1139741,
+        "body_yaw_to_center_deg": -1.462954728,
+        "closing_mps": 71.30307105,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.5340972,
+        "delta_body_rfu_m": [
+          -0.2947774871,
+          11.54228154,
+          0.6281357581
+        ],
+        "delta_world_m": [
+          7.072265625,
+          -9.073486328,
+          1.166442871
+        ],
+        "distance_2d_m": 11.50413383,
+        "distance_3d_m": 11.56311741,
+        "element_alpha": 128,
+        "elevation_deg": 5.789625833,
+        "eta_linear_s": 0.1621685748,
+        "heading_error_deg": -1.468481668,
+        "heading_error_rate_dps": -7.089968042,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": true,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": true,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 227,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3426,
+        "track_deg": 143.5534979,
+        "track_error_deg": -1.487882399,
+        "turn_direction": "left",
+        "turn_remaining_deg": 1.468481668,
+        "turn_remaining_rate_dps": 7.089968042,
+        "vehicle_inside_marker": true,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3389103,
+      "elapsed_ms": 461419
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.5385843,
+      "pitch_deg": 2.151654009,
+      "roll_deg": 0.03063432915,
+      "speed_kmh": 256.9164573,
+      "climb_mps": 5.711774528,
+      "heading_rate_dps": 0.0787214849,
+      "pitch_rate_dps": -9.20992152,
+      "roll_rate_dps": 0.6009361336,
+      "on_ground": false,
+      "agl_terrain_m": 76.11792755,
+      "health": 998.5854492,
+      "position_m": [
+        7426.728516,
+        -3846.174072,
+        76.11792755
+      ],
+      "horizontal_speed_kmh": 256.0922768,
+      "velocity_body_rfu_mps": [
+        0.01686403417,
+        71.30103704,
+        3.036955177
+      ],
+      "velocity_world_mps": [
+        42.26036966,
+        -57.22322464,
+        5.711774528
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3389159,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5534725,
+      "navigation": {
+        "altitude_error_m": 0.8360748291,
+        "ambiguous": false,
+        "bearing_deg": 141.2738132,
+        "body_pitch_to_center_deg": 4.20654601,
+        "body_yaw_to_center_deg": -2.259170992,
+        "closing_mps": 71.27578909,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.5385843,
+        "delta_body_rfu_m": [
+          -0.2968243773,
+          7.523985398,
+          0.5538216673
+        ],
+        "delta_world_m": [
+          4.694335938,
+          -5.854003906,
+          0.8360748291
+        ],
+        "distance_2d_m": 7.503742508,
+        "distance_3d_m": 7.550177001,
+        "element_alpha": 128,
+        "elevation_deg": 6.357732473,
+        "eta_linear_s": 0.1059290553,
+        "heading_error_deg": -2.26477114,
+        "heading_error_rate_dps": -13.96999073,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": true,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": true,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 0,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3483,
+        "track_deg": 143.5534725,
+        "track_error_deg": -2.279659308,
+        "turn_direction": "left",
+        "turn_remaining_deg": 2.26477114,
+        "turn_remaining_rate_dps": 13.96999073,
+        "vehicle_inside_marker": true,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3389160,
+      "elapsed_ms": 461476
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.5424112,
+      "pitch_deg": 1.63390824,
+      "roll_deg": 0.06203684526,
+      "speed_kmh": 257.048014,
+      "climb_mps": 5.175253004,
+      "heading_rate_dps": 0.06958000409,
+      "pitch_rate_dps": -9.413559451,
+      "roll_rate_dps": 0.5709548383,
+      "on_ground": false,
+      "agl_terrain_m": 76.41397095,
+      "health": 998.5854492,
+      "position_m": [
+        7429.069336,
+        -3849.343506,
+        76.41397095
+      ],
+      "horizontal_speed_kmh": 256.3719382,
+      "velocity_body_rfu_mps": [
+        0.01067762707,
+        71.3330393,
+        3.142610314
+      ],
+      "velocity_world_mps": [
+        42.30625331,
+        -57.28591084,
+        5.175253004
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3389159,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5537386,
+      "navigation": {
+        "altitude_error_m": 0.5400314331,
+        "ambiguous": false,
+        "bearing_deg": 138.7595243,
+        "body_pitch_to_center_deg": 6.968129672,
+        "body_yaw_to_center_deg": -4.771847995,
+        "closing_mps": 70.94109986,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.5424112,
+        "delta_body_rfu_m": [
+          -0.2981540666,
+          3.571667384,
+          0.4380474217
+        ],
+        "delta_world_m": [
+          2.353515625,
+          -2.684570312,
+          0.5400314331
+        ],
+        "distance_2d_m": 3.570147554,
+        "distance_3d_m": 3.610759963,
+        "element_alpha": 128,
+        "elevation_deg": 8.601527853,
+        "eta_linear_s": 0.05089799806,
+        "heading_error_deg": -4.782886942,
+        "heading_error_rate_dps": -45.78392368,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": true,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": true,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 55,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3538,
+        "track_deg": 143.5537386,
+        "track_error_deg": -4.79421435,
+        "turn_direction": "left",
+        "turn_remaining_deg": 4.782886942,
+        "turn_remaining_rate_dps": 45.78392368,
+        "vehicle_inside_marker": true,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3389215,
+      "elapsed_ms": 461531
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.5457911,
+      "pitch_deg": 1.117214893,
+      "roll_deg": 0.09230087971,
+      "speed_kmh": 256.626242,
+      "climb_mps": 4.584970325,
+      "heading_rate_dps": 0.05827270947,
+      "pitch_rate_dps": -8.908505968,
+      "roll_rate_dps": 0.5217936974,
+      "on_ground": false,
+      "agl_terrain_m": 76.68694305,
+      "health": 998.5854492,
+      "position_m": [
+        7431.484863,
+        -3852.613525,
+        76.68694305
+      ],
+      "horizontal_speed_kmh": 256.0948722,
+      "velocity_body_rfu_mps": [
+        0.00539553142,
+        71.21334692,
+        3.197084718
+      ],
+      "velocity_world_mps": [
+        42.25998521,
+        -57.22440481,
+        4.584970325
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3389159,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5542863,
+      "navigation": {
+        "altitude_error_m": 0.2670593262,
+        "ambiguous": false,
+        "bearing_deg": 353.953684,
+        "body_pitch_to_center_deg": 25.31530781,
+        "body_yaw_to_center_deg": -149.2912262,
+        "closing_mps": -53.98303281,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.5457911,
+        "delta_body_rfu_m": [
+          -0.2984300037,
+          -0.5024381308,
+          0.2764280453
+        ],
+        "delta_world_m": [
+          -0.06201171875,
+          0.5854492188,
+          0.2670593262
+        ],
+        "distance_2d_m": 0.5887242487,
+        "distance_3d_m": 0.6464649447,
+        "element_alpha": 128,
+        "elevation_deg": 24.40017458,
+        "eta_linear_s": null,
+        "heading_error_deg": -149.592107,
+        "heading_error_rate_dps": -2496.710691,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": true,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": true,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 113,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3596,
+        "track_deg": 143.5542863,
+        "track_error_deg": -149.6006023,
+        "turn_direction": "left",
+        "turn_remaining_deg": 149.592107,
+        "turn_remaining_rate_dps": 2496.710691,
+        "vehicle_inside_marker": true,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3389273,
+      "elapsed_ms": 461589
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.5487373,
+      "pitch_deg": 0.6386769283,
+      "roll_deg": 0.08312391998,
+      "speed_kmh": 255.8907912,
+      "climb_mps": 3.980708867,
+      "heading_rate_dps": 0.05261209874,
+      "pitch_rate_dps": -8.545320806,
+      "roll_rate_dps": -0.1638742807,
+      "on_ground": false,
+      "agl_terrain_m": 76.92329407,
+      "health": 998.5854492,
+      "position_m": [
+        7433.870117,
+        -3855.843262,
+        76.92329407
+      ],
+      "horizontal_speed_kmh": 255.489202,
+      "velocity_body_rfu_mps": [
+        0.003126768495,
+        71.00918163,
+        3.189390835
+      ],
+      "velocity_world_mps": [
+        42.15933084,
+        -57.08959103,
+        3.980708867
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3389159,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5549974,
+      "navigation": {
+        "altitude_error_m": 0.03070831299,
+        "ambiguous": false,
+        "bearing_deg": 327.3216997,
+        "body_pitch_to_center_deg": 1.019990531,
+        "body_yaw_to_center_deg": -176.2250384,
+        "closing_mps": -70.78732251,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.5487373,
+        "delta_body_rfu_m": [
+          -0.2983782773,
+          -4.522184256,
+          0.08068836971
+        ],
+        "delta_world_m": [
+          -2.447265625,
+          3.815185547,
+          0.03070831299
+        ],
+        "distance_2d_m": 4.532631663,
+        "distance_3d_m": 4.532735686,
+        "element_alpha": 128,
+        "elevation_deg": 0.3881695981,
+        "eta_linear_s": null,
+        "heading_error_deg": -176.2270376,
+        "heading_error_rate_dps": -475.6237597,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": true,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": true,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 169,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3652,
+        "track_deg": 143.5549974,
+        "track_error_deg": -176.2332976,
+        "turn_direction": "left",
+        "turn_remaining_deg": 176.2270376,
+        "turn_remaining_rate_dps": 475.6237597,
+        "vehicle_inside_marker": true,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3389329,
+      "elapsed_ms": 461645
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.5520422,
+      "pitch_deg": 0.1964530699,
+      "roll_deg": -0.09032261261,
+      "speed_kmh": 255.1741275,
+      "climb_mps": 3.368509933,
+      "heading_rate_dps": 0.05601493848,
+      "pitch_rate_dps": -7.495319634,
+      "roll_rate_dps": -2.939771739,
+      "on_ground": false,
+      "agl_terrain_m": 77.13211823,
+      "health": 998.5854492,
+      "position_m": [
+        7436.330566,
+        -3859.174805,
+        77.13211823
+      ],
+      "horizontal_speed_kmh": 254.8858177,
+      "velocity_body_rfu_mps": [
+        0.008921032627,
+        70.81275096,
+        3.125719074
+      ],
+      "velocity_world_mps": [
+        42.0594871,
+        -56.95496798,
+        3.368509933
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3389387,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5552758,
+      "navigation": {
+        "altitude_error_m": -0.1781158447,
+        "ambiguous": false,
+        "bearing_deg": 325.5223067,
+        "body_pitch_to_center_deg": -0.9775301215,
+        "body_yaw_to_center_deg": -178.0283219,
+        "closing_mps": -70.81415801,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.5520422,
+        "delta_body_rfu_m": [
+          -0.2983001802,
+          -8.66500164,
+          -0.1479365561
+        ],
+        "delta_world_m": [
+          -4.907714844,
+          7.146728516,
+          -0.1781158447
+        ],
+        "distance_2d_m": 8.669567086,
+        "distance_3d_m": 8.671396584,
+        "element_alpha": 128,
+        "elevation_deg": -1.176973494,
+        "eta_linear_s": null,
+        "heading_error_deg": -178.0297356,
+        "heading_error_rate_dps": -30.5542029,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": true,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": true,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 228,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3711,
+        "track_deg": 143.5552758,
+        "track_error_deg": -178.0329692,
+        "turn_direction": "left",
+        "turn_remaining_deg": 178.0297356,
+        "turn_remaining_rate_dps": 30.5542029,
+        "vehicle_inside_marker": true,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3389387,
+      "elapsed_ms": 461703
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.5274875,
+      "pitch_deg": -0.1615714013,
+      "roll_deg": -0.5497292199,
+      "speed_kmh": 254.5346223,
+      "climb_mps": 2.809365094,
+      "heading_rate_dps": -0.4464484552,
+      "pitch_rate_dps": -6.50953584,
+      "roll_rate_dps": -8.352847405,
+      "on_ground": false,
+      "agl_terrain_m": 77.29810333,
+      "health": 998.5854492,
+      "position_m": [
+        7438.658691,
+        -3862.327148,
+        77.29810333
+      ],
+      "horizontal_speed_kmh": 254.333613,
+      "velocity_body_rfu_mps": [
+        0.0607983564,
+        70.6400122,
+        3.008133407
+      ],
+      "velocity_world_mps": [
+        41.97024107,
+        -56.83019161,
+        2.809365094
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3389387,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5533855,
+      "navigation": {
+        "altitude_error_m": -0.3441009521,
+        "ambiguous": false,
+        "bearing_deg": 324.9091966,
+        "body_pitch_to_center_deg": -1.714160534,
+        "body_yaw_to_center_deg": -178.6016674,
+        "closing_mps": -70.67884287,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.5274875,
+        "delta_body_rfu_m": [
+          -0.3071347098,
+          -12.58214842,
+          -0.3766540287
+        ],
+        "delta_world_m": [
+          -7.235839844,
+          10.29907227,
+          -0.3441009521
+        ],
+        "distance_2d_m": 12.58682914,
+        "distance_3d_m": 12.59153181,
+        "element_alpha": 128,
+        "elevation_deg": -1.565972067,
+        "eta_linear_s": null,
+        "heading_error_deg": -178.618291,
+        "heading_error_rate_dps": -10.70100743,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": true,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": true,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 0,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3766,
+        "track_deg": 143.5533855,
+        "track_error_deg": -178.644189,
+        "turn_direction": "left",
+        "turn_remaining_deg": 178.618291,
+        "turn_remaining_rate_dps": 10.70100743,
+        "vehicle_inside_marker": true,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3389444,
+      "elapsed_ms": 461760
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.3570232,
+      "pitch_deg": -0.4734195573,
+      "roll_deg": -1.557184942,
+      "speed_kmh": 253.8889344,
+      "climb_mps": 2.269926667,
+      "heading_rate_dps": -2.889225594,
+      "pitch_rate_dps": -5.285561966,
+      "roll_rate_dps": -17.07552071,
+      "on_ground": false,
+      "agl_terrain_m": 77.4449234,
+      "health": 998.5854492,
+      "position_m": [
+        7441.16748,
+        -3865.723877,
+        77.4449234
+      ],
+      "horizontal_speed_kmh": 253.7573915,
+      "velocity_body_rfu_mps": [
+        0.3082874201,
+        70.46662568,
+        2.844937206
+      ],
+      "velocity_world_mps": [
+        41.88376665,
+        -56.69507384,
+        2.269926667
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3389387,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5446809,
+      "navigation": {
+        "altitude_error_m": -0.4909210205,
+        "ambiguous": false,
+        "bearing_deg": 324.5679639,
+        "body_pitch_to_center_deg": -2.112532559,
+        "body_yaw_to_center_deg": -178.7308383,
+        "closing_mps": -70.51315133,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.3570232,
+        "delta_body_rfu_m": [
+          -0.3722057544,
+          -16.80032696,
+          -0.6198718737
+        ],
+        "delta_world_m": [
+          -9.744628906,
+          13.69580078,
+          -0.4909210205
+        ],
+        "distance_2d_m": 16.80871059,
+        "distance_3d_m": 16.81587806,
+        "element_alpha": 128,
+        "elevation_deg": -1.672924806,
+        "eta_linear_s": null,
+        "heading_error_deg": -178.7890593,
+        "heading_error_rate_dps": -2.894379382,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": true,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": true,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 59,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3825,
+        "track_deg": 143.5446809,
+        "track_error_deg": -178.976717,
+        "turn_direction": "left",
+        "turn_remaining_deg": 178.7890593,
+        "turn_remaining_rate_dps": 2.894379382,
+        "vehicle_inside_marker": true,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3389502,
+      "elapsed_ms": 461818
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 143.1307226,
+      "pitch_deg": -0.6920497132,
+      "roll_deg": -3.016205274,
+      "speed_kmh": 253.34346,
+      "climb_mps": 1.833890192,
+      "heading_rate_dps": -4.190752848,
+      "pitch_rate_dps": -4.04870659,
+      "roll_rate_dps": -27.01889504,
+      "on_ground": false,
+      "agl_terrain_m": 77.55117798,
+      "health": 998.5854492,
+      "position_m": [
+        7443.414551,
+        -3868.763672,
+        77.55117798
+      ],
+      "horizontal_speed_kmh": 253.2574229,
+      "velocity_body_rfu_mps": [
+        0.6236145175,
+        70.32035056,
+        2.654296303
+      ],
+      "velocity_world_mps": [
+        41.82149768,
+        -56.56840205,
+        1.833890192
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3389387,
+        "water_z_m": 0
+      },
+      "track_deg": 143.5241701,
+      "navigation": {
+        "altitude_error_m": -0.5971755981,
+        "ambiguous": false,
+        "bearing_deg": 324.3769433,
+        "body_pitch_to_center_deg": -2.284454506,
+        "body_yaw_to_center_deg": -178.6311129,
+        "closing_mps": -70.36509162,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 143.1307226,
+        "delta_body_rfu_m": [
+          -0.4916579109,
+          -20.57478862,
+          -0.821011887
+        ],
+        "delta_world_m": [
+          -11.99169922,
+          16.7355957,
+          -0.5971755981
+        ],
+        "distance_2d_m": 20.58837084,
+        "distance_3d_m": 20.5970297,
+        "element_alpha": 128,
+        "elevation_deg": -1.661425817,
+        "eta_linear_s": null,
+        "heading_error_deg": -178.7537793,
+        "heading_error_rate_dps": 0.6533341363,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": true,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": true,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 113,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3879,
+        "track_deg": 143.5241701,
+        "track_error_deg": -179.1472268,
+        "turn_direction": "left",
+        "turn_remaining_deg": 178.7537793,
+        "turn_remaining_rate_dps": -0.6533341363,
+        "vehicle_inside_marker": true,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3389556,
+      "elapsed_ms": 461872
+    },
+    {
+      "vehicle": "e547",
+      "driver": true,
+      "model": 519,
+      "dimension": 0,
+      "interior": 0,
+      "heading_deg": 142.8473999,
+      "pitch_deg": -0.8784694494,
+      "roll_deg": -5.334541633,
+      "speed_kmh": 252.7699152,
+      "climb_mps": 1.441588346,
+      "heading_rate_dps": -4.722043952,
+      "pitch_rate_dps": -3.106995603,
+      "roll_rate_dps": -38.63893932,
+      "on_ground": false,
+      "agl_terrain_m": 77.64572144,
+      "health": 998.5854492,
+      "position_m": [
+        7445.922852,
+        -3872.150879,
+        77.64572144
+      ],
+      "horizontal_speed_kmh": 252.7166335,
+      "velocity_body_rfu_mps": [
+        1.000109871,
+        70.16450267,
+        2.435183226
+      ],
+      "velocity_world_mps": [
+        41.78025424,
+        -56.41204715,
+        1.441588346
+      ],
+      "landing_gear_down": false,
+      "surface": {
+        "ground_z_m": 0,
+        "tick_ms": 3389615,
+        "water_z_m": 0
+      },
+      "track_deg": 143.4753732,
+      "navigation": {
+        "altitude_error_m": -0.6917190552,
+        "ambiguous": false,
+        "bearing_deg": 324.2244,
+        "body_pitch_to_center_deg": -2.33691079,
+        "body_yaw_to_center_deg": -178.3979932,
+        "closing_mps": -70.20597324,
+        "color_rgba": [
+          255,
+          0,
+          0,
+          128
+        ],
+        "current_heading_deg": 142.8473999,
+        "delta_body_rfu_m": [
+          -0.6930950184,
+          -24.78208588,
+          -1.011737997
+        ],
+        "delta_world_m": [
+          -14.5,
+          20.12280273,
+          -0.6917190552
+        ],
+        "distance_2d_m": 24.80276577,
+        "distance_3d_m": 24.8124095,
+        "element_alpha": 128,
+        "elevation_deg": -1.597495716,
+        "eta_linear_s": null,
+        "heading_error_deg": -178.6229999,
+        "heading_error_rate_dps": 2.179656431,
+        "id": "e657",
+        "kind": "marker",
+        "marker_inside": true,
+        "marker_size_m": 30,
+        "marker_type": "ring",
+        "player_inside_marker": true,
+        "position": [
+          7431.422852,
+          -3852.028076,
+          76.95400238
+        ],
+        "scan_age_ms": 173,
+        "selection": "sticky_rank_then_nearest_observer",
+        "target_age_ms": 3939,
+        "track_deg": 143.4753732,
+        "track_error_deg": -179.2509731,
+        "turn_direction": "left",
+        "turn_remaining_deg": 178.6229999,
+        "turn_remaining_rate_dps": -2.179656431,
+        "vehicle_inside_marker": true,
+        "waypoint_generation": 46
+      },
+      "tick_ms": 3389616,
+      "elapsed_ms": 461932
+    }
+  ]
+}
