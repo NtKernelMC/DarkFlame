@@ -31,10 +31,40 @@ inline int VirtualKey(std::string key)
         return code == -1 ? 0 : LOBYTE(code);
     }
     if(key == "SPACE") return VK_SPACE;
-    if(key == "ENTER") return VK_RETURN;
-    if(key == "LSHIFT") return VK_LSHIFT;
-    if(key == "LCTRL") return VK_LCONTROL;
-    if(key == "LALT") return VK_LMENU;
+    if(key == "ENTER" || key == "RETURN") return VK_RETURN;
+    if(key == "SHIFT" || key == "LSHIFT") return VK_LSHIFT;
+    if(key == "RSHIFT") return VK_RSHIFT;
+    if(key == "CTRL" || key == "CONTROL" || key == "LCTRL" || key == "LCONTROL") return VK_LCONTROL;
+    if(key == "RCTRL" || key == "RCONTROL") return VK_RCONTROL;
+    if(key == "ALT" || key == "LALT") return VK_LMENU;
+    if(key == "RALT") return VK_RMENU;
+    if(key == "TAB") return VK_TAB;
+    if(key == "ESC" || key == "ESCAPE") return VK_ESCAPE;
+    if(key == "BACKSPACE" || key == "BACK") return VK_BACK;
+    if(key == "CAPSLOCK") return VK_CAPITAL;
+    if(key == "NUMLOCK") return VK_NUMLOCK;
+    if(key == "SCROLLLOCK") return VK_SCROLL;
+    if(key == "INSERT" || key == "INS") return VK_INSERT;
+    if(key == "DELETE" || key == "DEL") return VK_DELETE;
+    if(key == "HOME") return VK_HOME;
+    if(key == "END") return VK_END;
+    if(key == "PAGEUP" || key == "PGUP") return VK_PRIOR;
+    if(key == "PAGEDOWN" || key == "PGDN") return VK_NEXT;
+    if(key == "UP" || key == "ARROW_U") return VK_UP;
+    if(key == "DOWN" || key == "ARROW_D") return VK_DOWN;
+    if(key == "LEFT" || key == "ARROW_L") return VK_LEFT;
+    if(key == "RIGHT" || key == "ARROW_R") return VK_RIGHT;
+    if(key.size() >= 2 && key.size() <= 3 && key[0] == 'F'
+        && key[1] >= '1' && key[1] <= '9')
+    {
+        int number = key[1] - '0';
+        if(key.size() == 3)
+        {
+            if(key[2] < '0' || key[2] > '9') return 0;
+            number = number * 10 + key[2] - '0';
+        }
+        if(number <= 24) return VK_F1 + number - 1;
+    }
     return 0;
 }
 

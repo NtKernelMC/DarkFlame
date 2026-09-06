@@ -1,5 +1,6 @@
 #include "gui.h"
 
+#include "input_utils.h"
 #include "logger.h"
 #include "lua_bridge.h"
 #include "pilot_telemetry.h"
@@ -40,8 +41,6 @@ constexpr float CanvasHeight = 1024.0f;
 constexpr GUID DirectInput8WGuid = {0xBF798031, 0x483A, 0x4DA2,
     {0xAA, 0x99, 0x5D, 0x64, 0xED, 0x36, 0x97, 0x00}};
 constexpr GUID SystemMouseGuid = {0x6F1D2B60, 0xD5A0, 0x11CF,
-    {0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00}};
-constexpr GUID SystemKeyboardGuid = {0x6F1D2B61, 0xD5A0, 0x11CF,
     {0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00}};
 
 using PresentFn = HRESULT(__stdcall*)(IDirect3DDevice9*, const RECT*,
@@ -120,7 +119,6 @@ struct JbkState
     bool loaded{};
     bool bot{};
     bool bhop{true};
-    bool antiAfk{true};
     bool autoDisable{true};
     bool siren{true};
     bool stopOnAdmin{true};
@@ -162,11 +160,6 @@ std::atomic_long g_deviceState{};
 std::atomic_long g_deviceExState{};
 std::atomic_long g_inputFactoryState{};
 std::atomic_long g_inputDeviceState{};
-std::array<std::atomic_uchar, 256> g_emulatedKeys{};
-std::atomic<DWORD> g_inputErrorLogTick{};
-std::atomic_bool g_keyboardInputSeen{};
-std::atomic_bool g_keyEmulationUsed{};
-std::atomic_bool g_keyboardStreamWarningLogged{};
 bool g_initialized{};
 int g_activeTab{};
 int g_trafficState{3};
@@ -209,38 +202,7 @@ BOOL WINAPI HookClipCursor(const RECT* rectangle)
 HRESULT __stdcall HookGetDeviceState(IDirectInputDevice8W* device,
     DWORD size, void* data)
 {
-    HRESULT result = g_getDeviceState(device, size, data);
-    const bool keyboard = data && size == 256;
-    if(keyboard)
-    {
-        if(!g_keyboardInputSeen.exchange(true))
-            Log::Write(L"[input] DirectInput keyboard stream detected");
-        bool emulated{};
-        for(const auto& state : g_emulatedKeys)
-            emulated = emulated || state.load(std::memory_order_relaxed) != 0;
-        const DWORD now = GetTickCount();
-        if(FAILED(result) && (emulated || g_keyEmulationUsed.load(
-            std::memory_order_acquire)))
-        {
-            std::memset(data, 0, size);
-            DWORD logged = g_inputErrorLogTick.load(std::memory_order_relaxed);
-            if(now - logged >= 5000 && g_inputErrorLogTick.compare_exchange_strong(
-                logged, now, std::memory_order_relaxed))
-            {
-                wchar_t line[160]{};
-                swprintf_s(line, L"[input] GetDeviceState failed 0x%08lX; "
-                    L"serving emulated keyboard state", static_cast<unsigned long>(result));
-                Log::Write(line);
-            }
-            result = DI_OK;
-        }
-        if(SUCCEEDED(result) && !g_visible.load())
-        {
-            auto* keys = static_cast<unsigned char*>(data);
-            for(std::size_t index = 0; index < g_emulatedKeys.size(); ++index)
-                keys[index] |= g_emulatedKeys[index].load(std::memory_order_relaxed);
-        }
-    }
+    const HRESULT result = g_getDeviceState(device, size, data);
     if(g_visible.load() && SUCCEEDED(result) && data && size)
         std::memset(data, 0, size);
     return result;
@@ -296,11 +258,7 @@ HRESULT __stdcall HookCreateInputDevice(IDirectInput8W* api, REFGUID guid,
 {
     const HRESULT result = g_createInputDevice(api, guid, output, outer);
     if(SUCCEEDED(result) && output && *output)
-    {
         InstallInputDeviceHooks(*output);
-        if(IsEqualGUID(guid, SystemKeyboardGuid))
-            Log::Write(L"[input] DirectInput keyboard device created");
-    }
     return result;
 }
 
@@ -339,37 +297,6 @@ HRESULT WINAPI HookDirectInput8Create(HINSTANCE instance, DWORD version,
 
 void InstallGameInputHooks()
 {
-    HMODULE dinput8 = GetModuleHandleW(L"dinput8.dll");
-    if(!dinput8) dinput8 = LoadLibraryW(L"dinput8.dll");
-    void* directInput8Create = dinput8 ? reinterpret_cast<void*>(
-        GetProcAddress(dinput8, "DirectInput8Create")) : nullptr;
-    const bool inputCreated = directInput8Create
-        && MH_CreateHook(directInput8Create,
-            reinterpret_cast<void*>(&HookDirectInput8Create),
-            reinterpret_cast<void**>(&g_directInput8Create)) == MH_OK;
-    const bool inputReady = inputCreated
-        && MH_EnableHook(directInput8Create) == MH_OK;
-    if(inputReady)
-    {
-        IDirectInput8W* probe{};
-        if(SUCCEEDED(g_directInput8Create(GetModuleHandleW(nullptr),
-            DIRECTINPUT_VERSION, DirectInput8WGuid,
-            reinterpret_cast<void**>(&probe), nullptr)) && probe)
-        {
-            InstallInputFactoryHook(probe);
-            IDirectInputDevice8W* keyboard{};
-            if(SUCCEEDED(probe->CreateDevice(SystemKeyboardGuid, &keyboard, nullptr))
-                && keyboard)
-            {
-                InstallInputDeviceHooks(keyboard);
-                keyboard->Release();
-            }
-            probe->Release();
-        }
-    }
-    Log::Write(inputReady ? L"[input] DirectInput emulation hook installed"
-        : L"[input] DirectInput emulation hook failed");
-
     HMODULE user32 = GetModuleHandleW(L"user32.dll");
     void* setCursorPos = user32 ? reinterpret_cast<void*>(
         GetProcAddress(user32, "SetCursorPos")) : nullptr;
@@ -533,6 +460,7 @@ bool InitializeGui(IDirect3DDevice9* device)
         || !parameters.hFocusWindow)
         return false;
     g_window = parameters.hFocusWindow;
+    InputUtil::SetGameWindow(g_window);
     if(!LoadTexture(device, IDR_DARK_FLAME_BACKGROUND, &g_background)
         || !LoadTexture(device, IDR_DARK_FLAME_BANNER, &g_banner))
     {
@@ -890,13 +818,15 @@ void DrawJbkBot(ImVec2 position, ImVec2 size, float scale)
         state.status.c_str());
     ImGui::Separator();
 
+    ImGui::TextUnformatted("R: раз в 2 секунды во время работы бота.");
+    ImGui::Separator();
+
     if(ImGui::BeginTable("##jbk_settings", 3,
         ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_BordersInnerV))
     {
         ImGui::TableNextColumn();
         ImGui::SeparatorText("Основное");
         JbkToggle("Банни-хоп", state.bhop, "bhop");
-        JbkToggle("Анти-AFK (ПКМ)", state.antiAfk, "anti_afk");
         JbkToggle("Сирена", state.siren, "siren");
         JbkToggle("Автоотключение", state.autoDisable, "auto_disable");
         JbkToggle("Стоп при админе", state.stopOnAdmin, "stop_admin");
@@ -1382,28 +1312,6 @@ bool GuiVisible()
     return g_visible.load();
 }
 
-bool GuiEmulateKey(int virtualKey, bool pressed)
-{
-    const UINT code = MapVirtualKeyW(static_cast<UINT>(virtualKey),
-        MAPVK_VK_TO_VSC_EX);
-    UINT scan = code & 0xFF;
-    if((code & 0xFF00) == 0xE000)
-        scan |= 0x80;
-    if(!scan || scan >= g_emulatedKeys.size())
-        return false;
-    g_emulatedKeys[scan].store(pressed ? 0x80 : 0,
-        std::memory_order_release);
-    g_keyEmulationUsed.store(true, std::memory_order_release);
-    const bool hooked = g_inputDeviceState.load(std::memory_order_acquire) == 2;
-    const bool observed = g_keyboardInputSeen.load(std::memory_order_acquire);
-    if(hooked && !observed && !g_keyboardStreamWarningLogged.exchange(true))
-    {
-        Log::Write(L"[input] DirectInput hook is ready, but the game keyboard "
-            L"stream is not observed; using PostMessage fallback");
-    }
-    return hooked && observed;
-}
-
 bool GuiTakeLuaCode(std::string& code, std::string& resource)
 {
     std::scoped_lock lock(g_bridgeMutex);
@@ -1543,7 +1451,6 @@ void GuiUpdateJbkState(std::string_view key, std::string_view value)
     if(key == "loaded") g_jbkState.loaded = enabled;
     else if(key == "bot") g_jbkState.bot = enabled;
     else if(key == "bhop") g_jbkState.bhop = enabled;
-    else if(key == "anti_afk") g_jbkState.antiAfk = enabled;
     else if(key == "auto_disable") g_jbkState.autoDisable = enabled;
     else if(key == "siren") g_jbkState.siren = enabled;
     else if(key == "stop_admin") g_jbkState.stopOnAdmin = enabled;

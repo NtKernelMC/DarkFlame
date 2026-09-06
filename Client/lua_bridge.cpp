@@ -881,7 +881,7 @@ void DispatchEventCatchers(void* lua)
 int __cdecl DirectEmulateKey(void* lua)
 {
     const std::string key = LuaText(lua, 1, 32);
-    if(key == "rmb")
+    if(key == "rmb" || key == "lmb")
         return DirectEmulateMouseButton(lua);
     const int virtualKey = VirtualKey(key);
     if(!virtualKey)
@@ -897,7 +897,6 @@ int __cdecl DirectEmulateKey(void* lua)
     }
 
     const bool pressed = DarkFlameLuaToBoolean(lua, 2) != 0;
-    const bool directInput = GuiEmulateKey(virtualKey, pressed);
     HWND window = GameWindow();
     const KeyPostResult posted = PostKey(window, virtualKey, pressed);
 
@@ -906,14 +905,14 @@ int __cdecl DirectEmulateKey(void* lua)
     if(!posted.posted || logged < 24)
     {
         wchar_t line[320]{};
-        swprintf_s(line, L"[input] key=%hs %s post=%u dinput=%u minimized=%u "
+        swprintf_s(line, L"[input] key=%hs %s post=%u backend=PostMessage/reassert-v2 minimized=%u "
             L"hwnd=0x%p scan=0x%X error=%lu", key.c_str(),
             pressed ? L"down" : L"up", posted.posted ? 1u : 0u,
-            directInput ? 1u : 0u, window && IsIconic(window) ? 1u : 0u,
+            window && IsIconic(window) ? 1u : 0u,
             window, posted.scan, static_cast<unsigned long>(posted.error));
         Log::Write(line);
     }
-    return PushDirectResult(lua, posted.posted || directInput);
+    return PushDirectResult(lua, posted.posted);
 }
 
 int __cdecl DirectEmulateMouseButton(void* lua)
@@ -945,8 +944,8 @@ int __cdecl DirectEmulateMouseButton(void* lua)
     if(!GetCursorPos(&point) || !ScreenToClient(window, &point))
         point = {};
     const bool pressed = DarkFlameLuaToBoolean(lua, 2) != 0;
-    return PushDirectResult(lua, PostMessageA(window, pressed ? down : up,
-        pressed ? state : 0, MAKELPARAM(point.x, point.y)) != FALSE);
+    return PushDirectResult(lua, PostMouseButton(window, down, up, state,
+        pressed, MAKELPARAM(point.x, point.y)));
 }
 
 int __cdecl DirectPlayAlertSignal(void* lua)

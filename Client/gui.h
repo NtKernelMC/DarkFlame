@@ -15,7 +15,6 @@ struct GuiLuaThread
 
 bool StartGui(HMODULE module);
 bool GuiVisible();
-bool GuiEmulateKey(int virtualKey, bool pressed);
 bool GuiTakeLuaCode(std::string& code, std::string& resource);
 bool GuiTakeUnloadThread(std::uintptr_t& id);
 bool GuiTakeTramCommand(std::string& command);

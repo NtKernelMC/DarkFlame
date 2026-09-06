@@ -299,6 +299,7 @@ inline void WriteMiniDump(PEXCEPTION_POINTERS exception)
     const auto type = static_cast<MINIDUMP_TYPE>(MiniDumpWithDataSegs
         | MiniDumpWithHandleData | MiniDumpWithUnloadedModules
         | MiniDumpWithIndirectlyReferencedMemory | MiniDumpScanMemory
+        | MiniDumpWithPrivateReadWriteMemory
         | MiniDumpWithFullMemoryInfo | MiniDumpWithThreadInfo
         | MiniDumpIgnoreInaccessibleMemory);
     if (!MiniDumpWriteDump(g_process, GetCurrentProcessId(), file, type,
@@ -347,6 +348,7 @@ inline LONG WriteReport(const char* reason, PEXCEPTION_POINTERS exception)
     }
     Write(log, "Symbols: %s, image=%ls\r\n", g_symbolsReady ? "PDB loaded" : "unavailable",
         g_imagePath);
+    Write(log, "Dump memory: private read/write regions and referenced memory\r\n");
     Write(log, "EAX=%08lX EBX=%08lX ECX=%08lX EDX=%08lX ESI=%08lX EDI=%08lX\r\n",
         context.Eax, context.Ebx, context.Ecx, context.Edx,
         context.Esi, context.Edi);

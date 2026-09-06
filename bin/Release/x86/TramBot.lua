@@ -282,15 +282,14 @@ local function notify(text, errorMessage)
 end
 
 local function debugOutput(text)
+    text = tostring(text)
+    api.log(text)
     if debugEnabled then
-        text = tostring(text)
         outputChatBox("#E6A15C[TramBot debug] #FFFFFF" .. text, 255, 255, 255, true)
-        api.log(text)
     end
 end
 
 local function debugChange(key, value, text)
-    if not debugEnabled then return end
     value = tostring(value)
     if debugMemory[key] == value then return end
     debugMemory[key] = value
@@ -298,7 +297,6 @@ local function debugChange(key, value, text)
 end
 
 local function debugRate(key, delay, text)
-    if not debugEnabled then return end
     local now = getTickCount()
     if debugTicks[key] and now - debugTicks[key] < delay then return end
     debugTicks[key] = now
@@ -1166,6 +1164,10 @@ local function onBrakeRender()
         string.format("Команды движения: W=%s, S=%s", tostring(desiredW), tostring(desiredS)))
     safeDriveKey("W", desiredW)
     safeDriveKey("S", desiredS)
+    debugRate("input_feedback",1000,string.format(
+        "Обратная связь ввода: desiredW=%s desiredS=%s accelerate=%s brake_reverse=%s speed=%.4f",
+        tostring(desiredW),tostring(desiredS),tostring(getPedControlState(localPlayer,"accelerate")),
+        tostring(getPedControlState(localPlayer,"brake_reverse")),speed))
 end
 
 local lightSequence = 0

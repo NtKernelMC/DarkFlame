@@ -52,6 +52,7 @@ bin/Release/*
 bin/Release/x86/*
 !bin/Release/x86/*.lua
 !bin/Release/x86/DarkFlame.cfg
+!bin/Release/x86/JBK.route
 obj/
 .vs/
 

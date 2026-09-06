@@ -77,6 +77,14 @@ static const Node dummynode_ = {
   {{{NULL}, LUA_TNIL, NULL}}  /* key */
 };
 
+/* A host Lua copy has a different static sentinel address. */
+static int isdummy (const Table *t) {
+  return t->lsizenode == 0 &&
+         cast(size_t, t->lastfree) <= cast(size_t, t->node) &&
+         ttisnil(gkey(t->node)) && ttisnil(gval(t->node)) &&
+         gnext(t->node) == NULL;
+}
+
 
 /*
 ** hash for lua_Numbers
@@ -271,11 +279,9 @@ static void setarrayvector (lua_State *L, Table *t, int size) {
 
 static void setnodevector (lua_State *L, Table *t, int size) {
   int lsize;
-  if (size == 0) {  /* no elements to hash part? */
-    t->node = cast(Node *, dummynode);  /* use common `dummynode' */
-    lsize = 0;
-  }
-  else {
+  /* Only owned storage may cross into another Lua runtime. */
+  if (size == 0) size = 1;
+  {
     int i;
     lsize = ceillog2(size);
     if (lsize > MAXBITS)
@@ -298,6 +304,7 @@ static void resize (lua_State *L, Table *t, int nasize, int nhsize) {
   int i;
   int oldasize = t->sizearray;
   int oldhsize = t->lsizenode;
+  int olddummy = isdummy(t);
   Node *nold = t->node;  /* save old hash ... */
   if (nasize > oldasize)  /* array part must grow? */
     setarrayvector(L, t, nasize);
@@ -319,13 +326,13 @@ static void resize (lua_State *L, Table *t, int nasize, int nhsize) {
     if (!ttisnil(gval(old)))
       setobjt2t(L, luaH_set(L, t, key2tval(old)), gval(old));
   }
-  if (nold != dummynode)
+  if (!olddummy)
     luaM_freearray(L, nold, twoto(oldhsize), Node);  /* free old array */
 }
 
 
 void luaH_resizearray (lua_State *L, Table *t, int nasize) {
-  int nsize = (t->node == dummynode) ? 0 : sizenode(t);
+  int nsize = isdummy(t) ? 0 : sizenode(t);
   resize(L, t, nasize, nsize);
 }
 
@@ -357,22 +364,34 @@ static void rehash (lua_State *L, Table *t, const TValue *ek) {
 
 Table *luaH_new (lua_State *L, int narray, int nhash) {
   Table *t = luaM_new(L, Table);
-  luaC_link(L, obj2gco(t), LUA_TTABLE);
+  global_State *g = G(L);
+  Node *node = cast(Node *, (*g->frealloc)(g->ud, NULL, 0, sizeof(Node)));
+  if (node == NULL) {
+    luaM_free(L, t);
+    luaD_throw(L, LUA_ERRMEM);
+  }
+  g->totalbytes += sizeof(Node);
+  *node = *dummynode;
   t->metatable = NULL;
   t->flags = cast_byte(~0);
   /* temporary values (kept only if some malloc fails) */
   t->array = NULL;
   t->sizearray = 0;
   t->lsizenode = 0;
-  t->node = cast(Node *, dummynode);
+  t->node = node;
+  t->lastfree = node + 1;
+  luaC_link(L, obj2gco(t), LUA_TTABLE);
   setarrayvector(L, t, narray);
-  setnodevector(L, t, nhash);
+  if (nhash > 1) {
+    setnodevector(L, t, nhash);
+    luaM_freearray(L, node, 1, Node);
+  }
   return t;
 }
 
 
 void luaH_free (lua_State *L, Table *t) {
-  if (t->node != dummynode)
+  if (!isdummy(t))
     luaM_freearray(L, t->node, sizenode(t), Node);
   luaM_freearray(L, t->array, t->sizearray, TValue);
   luaM_free(L, t);
@@ -398,7 +417,7 @@ static Node *getfreepos (Table *t) {
 */
 static TValue *newkey (lua_State *L, Table *t, const TValue *key) {
   Node *mp = mainposition(t, key);
-  if (!ttisnil(gval(mp)) || mp == dummynode) {
+  if (!ttisnil(gval(mp)) || isdummy(t)) {
     Node *othern;
     Node *n = getfreepos(t);  /* get a free place */
     if (n == NULL) {  /* cannot find a free place? */
@@ -570,7 +589,7 @@ int luaH_getn (Table *t) {
     return i;
   }
   /* else must find a boundary in hash part */
-  else if (t->node == dummynode)  /* hash part is empty? */
+  else if (isdummy(t))  /* hash part is empty? */
     return j;  /* that is easy... */
   else return unbound_search(t, j);
 }
