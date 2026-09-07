@@ -128,7 +128,7 @@ class ArrivalGuidanceTests(unittest.TestCase):
         self.assertIn('Нет текущего маркера', self.c.status)
 
     def test_long_background_gap_preserves_airborne_guidance_and_real_fault_checks(self):
-        for fault in (None, 'driver', 'dimension', 'health', 'position_m'):
+        for fault in (None, 'driver', 'interior', 'health', 'position_m'):
             with self.subTest(fault=fault):
                 self.setUp()
                 d = copy.deepcopy(FIXTURE['cases']['left_entry']['sample'])
@@ -136,7 +136,7 @@ class ArrivalGuidanceTests(unittest.TestCase):
                 self.update(d)
                 d['window_minimized'] = True
                 if fault:
-                    d[fault] = {'driver':False, 'dimension':5, 'health':100, 'position_m':[50000,0,1000]}[fault]
+                    d[fault] = {'driver':False, 'interior':5, 'health':100, 'position_m':[50000,0,1000]}[fault]
                 out = self.update(d, 5000)
                 self.assertEqual(self.c.enabled, fault is None)
                 if fault is None:

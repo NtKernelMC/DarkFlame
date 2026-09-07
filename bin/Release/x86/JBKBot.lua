@@ -15,6 +15,7 @@ for name, fn in pairs(api) do
 end
 
 local _STATE = false
+local botDimension
 local syncOptionsBotState = function() end
 local syncNativeJbkState = function() end
 local cancelAutoResume = function() end
@@ -811,7 +812,9 @@ changeBotState = function(state)
         end
         -- Запускаем живую походку если включена
         if WALK and WALK.enabled then startWalk() end
+        botDimension = getElementDimension(localPlayer)
     else
+        botDimension = nil
         destroyHelpingMarkers()
         STORAGE.MARKERS = {}
         STORAGE.PATH_ID = 0
@@ -832,6 +835,20 @@ changeBotState = function(state)
     syncNativeJbkState()
     return true
 end
+
+
+setTimer(function()
+    if not _STATE or botDimension == nil then return end
+    local current = getElementDimension(localPlayer)
+    if current == botDimension then return end
+    local previous = botDimension
+    playAlert("dimension_change", 0)
+    cancelAutoResume()
+    _STATE = false
+    changeBotState(false)
+    outputChatBox(string.format("#FF4444[JBK] #FFFFFFDimension персонажа изменился: %s -> %s. Бот выключен.",
+        tostring(previous), tostring(current)), 255,255,255,true)
+end, 2000, 0)
 
 local function toggleBot()
     cancelAutoResume()

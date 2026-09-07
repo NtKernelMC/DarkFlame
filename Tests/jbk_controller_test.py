@@ -143,4 +143,18 @@ class ControllerTests(unittest.TestCase):
     def test_missing_job_marker_does_not_start_or_press_r(self):
         self.lua.execute('job.valid=false; command("bot:1"); for i=1,80 do step() end; assert(ui.bot=="0" and #keys==0)')
 
+    def test_dimension_change_sounds_and_stops_without_auto_resume(self):
+        self.start()
+        self.lua.execute('''
+            localPlayer.dimension=7
+            for _,timer in ipairs(timers) do
+                if timer.valid and timer.interval==2000 then timer.fn(unpack(timer.args)) end
+            end
+            assert(alerts==1 and ui.bot=="0")
+            assert(controls.forwards==false and controls.sprint==false)
+            for _,timer in ipairs(timers) do
+                assert(not (timer.valid and timer.interval==180000))
+            end
+        ''')
+
 if __name__=='__main__': unittest.main()

@@ -3,7 +3,7 @@ local PilotController = (function()
 -- Pure controller: no game APIs, resource loading or server events.
 local Controller = {}
 Controller.__index = Controller
-Controller.version = "0.1.13"
+Controller.version = "0.1.14"
 
 local function finite(v) return type(v) == "number" and v == v and math.abs(v) < math.huge end
 local function clamp(v, low, high) return math.max(low, math.min(high, v)) end
@@ -73,7 +73,9 @@ function Controller:start(data, now)
     if not finite(data.heading_deg) or not finite(data.speed_kmh) or not finite(data.pitch_deg) or not finite(data.roll_deg) then
         return false, "Нет достоверных данных положения самолёта."
     end
-    self.enabled, self.vehicle, self.world = true, data.vehicle, tostring(data.dimension) .. ":" .. tostring(data.interior)
+    self.enabled, self.vehicle = true, data.vehicle
+    self.dimension, self.interior = data.dimension, data.interior
+    self.world = tostring(data.dimension) .. ":" .. tostring(data.interior)
     self.lastTick, self.started, self.navPosition, self.navId = now, now, nil, nil
     self.controlReady = false
     self.groundProgress = nil
@@ -341,7 +343,16 @@ function Controller:update(data, now, pathClear, probeStatus)
         return self:stop(self.controlReady and "Пауза кадров больше 5 с" or "Пауза кадров больше 300 мс при запуске")
     end
     if not data or data.vehicle ~= self.vehicle or data.driver ~= true then return self:stop("Потеря самолёта / места пилота") end
-    if tostring(data.dimension) .. ":" .. tostring(data.interior) ~= self.world then return self:stop("Смена мира") end
+    if data.interior ~= self.interior then return self:stop("Смена интерьера") end
+    local dimensionChanged = data.dimension ~= self.dimension
+    if dimensionChanged then
+        self.dimension = data.dimension
+        self.world = tostring(data.dimension) .. ":" .. tostring(data.interior)
+        self.lastPosition = data.position_m
+        self.navPosition, self.navId, self.navType = nil, nil, nil
+        self.closest, self.passedSince, self.missingSince = nil, nil, nil
+        self.filteredRates = {yaw = 0, pitch = 0, roll = 0}
+    end
     for _, name in ipairs({"heading_deg", "pitch_deg", "roll_deg", "speed_kmh", "climb_mps"}) do
         if not finite(data[name]) then return self:stop("Нет данных: " .. name) end
     end
@@ -351,7 +362,7 @@ function Controller:update(data, now, pathClear, probeStatus)
         dt = 0.05
         self.filteredRates, self.output = {yaw = 0, pitch = 0, roll = 0}, neutral()
     end
-    if vector(data.position_m) and vector(self.lastPosition) then
+    if not dimensionChanged and vector(data.position_m) and vector(self.lastPosition) then
         local d = 0
         for i = 1, 3 do d = d + (data.position_m[i] - self.lastPosition[i])^2 end
         if math.sqrt(d) > math.max(30, data.speed_kmh / 3.6 * frameGap * 4) then return self:stop("Скачок позиции самолёта") end
@@ -805,7 +816,7 @@ end)()
 -- END EMBEDDED PILOT CONTROLLER
 
 -- Flight recorder and opt-in local-player controller. Navigation uses live elements.
-local VERSION = "1.2.17"
+local VERSION = "1.2.18"
 local native = {log = dfPilotLog, update = dfPilotUpdate, command = dfPilotTakeCommand,
     alert = dfPlayAlertSignal, alertMonitor = dfSetAlertMonitorEnabled}
 for _, name in ipairs({"log", "update", "command", "alert", "alertMonitor"}) do
@@ -1066,6 +1077,19 @@ local function safetyAlert(key, cooldown, text, data)
     emit("safety_alert", {kind = key, text = text or NULL, played = played, context = data or NULL,
         play_call_ms = playCallMs, handler_ms = elapsed(getTickCount(), now)}, true)
     return played
+end
+
+local function checkAutopilotDimension(now)
+    if not autopilot.enabled or state.autopilotDimension == nil
+        or elapsed(now, state.lastDimensionCheck) < 2000 then return end
+    state.lastDimensionCheck = now
+    local current = read("getElementDimension", localPlayer)
+    if current == state.autopilotDimension then return end
+    local previous = state.autopilotDimension
+    state.autopilotDimension = current
+    safetyAlert("dimension_change", 0,
+        string.format("Dimension персонажа изменился: %s -> %s", tostring(previous), tostring(current)),
+        {previous_dimension = previous, current_dimension = current, autopilot_continues = true})
 end
 
 local function cleanNick(value)
@@ -1832,6 +1856,7 @@ stopAutopilot = function(reason)
     if state.nextJob then emit("autonomy_cancel", {reason = reason, stage = state.nextJob.stage}, true) end
     state.nextJob = nil
     local previous = wasEnabled and autopilotSnapshot() or nil
+    state.autopilotDimension, state.lastDimensionCheck = nil, nil
     autopilot:stop(reason)
     local failed = releaseAutopilotControls()
     if not releaseRmb("autopilot_stopped") then failed[#failed + 1] = "rmb" end
@@ -2107,6 +2132,8 @@ local function startAutopilot()
         return
     end
     state.apSessionActive = true
+    state.autopilotDimension = read("getElementDimension", localPlayer)
+    state.lastDimensionCheck = now
     state.completionGrace = nil
     state.rmbLastTick = now
     state.controlsSuspended = false
@@ -2231,6 +2258,7 @@ local function onFrame(frameMs, background)
     updateAutonomy(now)
     now = getTickCount()
     syncSafetyMonitor()
+    checkAutopilotDimension(now)
     if safetyActive() and elapsed(now, state.lastSafetyScan) >= 2000 then scanSafetyPlayers(now) end
     now = getTickCount()
     local input
