@@ -909,25 +909,15 @@ void RenderMenu()
     ImGuiIO& io = ImGui::GetIO();
     io.MouseDrawCursor = true;
     const bool pilotLayout = g_activeTab >= 5;
-    const bool plowLayout = g_activeTab == 6;
-    const float scale = plowLayout
-        ? std::clamp(io.DisplaySize.x * 0.96f / CanvasWidth, 0.72f, 1.0f)
-        : std::min(io.DisplaySize.x / CanvasWidth,
-            io.DisplaySize.y / (pilotLayout ? 900.0f : CanvasHeight)) * 0.94f;
-    const float height = plowLayout ? io.DisplaySize.y * 0.96f / scale
-        : pilotLayout ? std::max(900.0f, io.DisplaySize.y * 0.97f / scale) : CanvasHeight;
-    const ImVec2 size(plowLayout ? std::min(CanvasWidth * scale, io.DisplaySize.x * 0.96f)
-        : CanvasWidth * scale, height * scale);
-    const float canvasWidth = size.x / scale;
+    const float scale = std::min(io.DisplaySize.x / CanvasWidth,
+        io.DisplaySize.y / (pilotLayout ? 900.0f : CanvasHeight)) * 0.94f;
+    const float height = pilotLayout ? std::max(900.0f, io.DisplaySize.y * 0.97f / scale) : CanvasHeight;
+    const ImVec2 size(CanvasWidth * scale, height * scale);
     const ImVec2 centered((io.DisplaySize.x - size.x) * 0.5f,
         (io.DisplaySize.y - size.y) * 0.5f);
 
     static bool previousPilotLayout = pilotLayout;
-    static ImVec2 previousDisplay{};
-    const bool displayChanged = previousDisplay.x != io.DisplaySize.x || previousDisplay.y != io.DisplaySize.y;
-    ImGui::SetNextWindowPos(centered, plowLayout || displayChanged || previousPilotLayout != pilotLayout
-        ? ImGuiCond_Always : ImGuiCond_Once);
-    previousDisplay = io.DisplaySize;
+    ImGui::SetNextWindowPos(centered, previousPilotLayout != pilotLayout ? ImGuiCond_Always : ImGuiCond_Once);
     previousPilotLayout = pilotLayout;
     ImGui::SetNextWindowSize(size);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2());
@@ -949,9 +939,8 @@ void RenderMenu()
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->AddImage(Texture(g_background), origin,
         {origin.x + size.x, origin.y + size.y});
-    if(!plowLayout)
-        draw->AddImage(Texture(g_banner), point(80.0f, pilotLayout ? 100.0f : 113.0f),
-            point(1456.0f, pilotLayout ? 220.0f : 404.0f));
+    draw->AddImage(Texture(g_banner), point(80.0f, pilotLayout ? 100.0f : 113.0f),
+        point(1456.0f, pilotLayout ? 220.0f : 404.0f));
 
     DrawFlame(draw, point(94.0f, 61.0f), 22.0f * scale);
     const char* title = "Dark Flame by DroidZero";
@@ -962,21 +951,17 @@ void RenderMenu()
         {origin.x + (size.x - titleSize.x) * 0.5f, point(0.0f, 45.0f).y},
         IM_COL32(245, 228, 255, 255), title);
 
-    const float tabY = plowLayout ? 110.0f : pilotLayout ? 235.0f : 421.0f;
+    const float tabY = pilotLayout ? 235.0f : 421.0f;
     DrawCodeIcon(draw, point(111.0f, tabY + 32.0f), 15.0f * scale,
         IM_COL32(201, 45, 255, 255));
     const char* tabIds[]{"##tab_lua", "##tab_events", "##tab_threads", "##tab_tram", "##tab_jbk", "##tab_pilot", "##tab_plow"};
     const char* tabNames[]{"Lua Injector", "Event Monitor", "Lua Threads", "TramBot", "JBK Bot", "Pilot", "Поливалка"};
-    const float tabStride = plowLayout ? (canvasWidth - 215.0f) / 7.0f : 188.0f;
     for(int i = 0; i < 7; ++i)
-        DrawTab(tabIds[i], tabNames[i], i, point(135.0f + i * tabStride, tabY),
-            extent(tabStride - 8.0f, plowLayout ? 52.0f : 65.0f), g_activeTab == i, draw,
-            plowLayout ? scale * 0.84f : scale);
-    const ImVec2 contentPosition = point(plowLayout ? 80.0f : 105.0f,
-        plowLayout ? 170.0f : pilotLayout ? 312.0f : 495.0f);
-    const ImVec2 contentSize = extent(plowLayout ? canvasWidth - 160.0f : 1326.0f,
-        plowLayout ? height - 210.0f - 12.0f / scale
-            : pilotLayout ? height - 342.0f : g_activeTab == 0 ? 285.0f : 310.0f);
+        DrawTab(tabIds[i], tabNames[i], i, point(135.0f + i * 188.0f, tabY),
+            extent(180.0f, 65.0f), g_activeTab == i, draw, scale);
+    const ImVec2 contentPosition = point(105.0f, pilotLayout ? 312.0f : 495.0f);
+    const ImVec2 contentSize = extent(1326.0f,
+        pilotLayout ? height - 342.0f : g_activeTab == 0 ? 285.0f : 310.0f);
     ImGui::SetCursorScreenPos(contentPosition);
     ImGui::PushFont(g_codeFont, g_codeFont->LegacySize * scale);
     if(g_activeTab == 0)

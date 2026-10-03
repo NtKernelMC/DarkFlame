@@ -1,5 +1,4 @@
-
-local VERSION = "2.11.2"
+local VERSION = "2.14.0"
 local SPEEDO = 1.0
 local REAL_KMH = 1 / 0.698
 local WATER_RATE = 1.46
@@ -9,11 +8,9 @@ local SPRAY_OFF_SPEED = 25
 local LIGHT_STOP = 3
 local LIGHT_DECEL = 3.5
 local CAPTURE = 7.0
-
 local UNIT_MS = REAL_KMH / 3.6
 local function toMs(units) return units * UNIT_MS end
 local function toUnits(ms) return ms / UNIT_MS end
-
 local DECEL = 5.5
 local TURN_TABLE = {{0, 6.0}, {3.5, 6.3}, {6.5, 9.6}, {9.5, 12.9}, {13, 18.9},
     {19, 32.9}, {30, 60}}
@@ -39,21 +36,38 @@ local function speedForRadius(radius)
     end
     return TURN_TABLE[#TURN_TABLE][1]
 end
+local STEER_SHARE = {{0, 0}, {0.11, 0.027}, {0.16, 0.066}, {0.225, 0.137}, {0.33, 0.294},
+    {0.40, 0.446}, {0.465, 0.61}, {0.55, 0.73}, {0.66, 0.79}, {1, 1}}
+local function steerShare(steer, ms)
+    local a = math.min(1, math.abs(steer))
+    local t = 1
+    for i = 2, #STEER_SHARE do
+        local s1, f1 = STEER_SHARE[i][1], STEER_SHARE[i][2]
+        if a <= s1 then
+            local s0, f0 = STEER_SHARE[i - 1][1], STEER_SHARE[i - 1][2]
+            t = f0 + (f1 - f0) * (a - s0) / (s1 - s0)
+            break
+        end
+    end
+    local w = math.max(0, math.min(1, (math.abs(ms) - 4) / 10))
+    return (1 - w) * a * a + w * t
+end
 local function steerForCurvature(curvature, ms)
     local full = 1 / minRadius(ms)
     local share = math.min(1, math.abs(curvature) / full)
-    return (curvature >= 0 and 1 or -1) * math.sqrt(share)
+    local lo, hi = 0, 1
+    for _ = 1, 16 do
+        local mid = (lo + hi) / 2
+        if steerShare(mid, ms) < share then lo = mid else hi = mid end
+    end
+    return (curvature >= 0 and 1 or -1) * hi
 end
-
 local Controller = {}
 Controller.__index = Controller
-
 local function finite(v) return type(v) == "number" and v == v and math.abs(v) < math.huge end
 local function clamp(v, low, high) return math.max(low, math.min(high, v)) end
 local function angle(v) return (v + 180) % 360 - 180 end
-
 local function bearingTo(dx, dy) return math.deg(math.atan2(-dx, dy)) end
-
 local CORNER_TABLE = {{15, 48}, {30, 42}, {50, 36}, {65, 31}, {90, 26}, {110, 16}, {130, 12}}
 local function cornerSpeed(turn, cruise)
     cruise = cruise or CRUISE
@@ -69,24 +83,20 @@ local function cornerSpeed(turn, cruise)
     end
     return cruise
 end
-
 local LANE = 3.5
 local AVOID_TRIGGER = 28
 local AVOID_CLEAR = 45
 local AVOID_RATE = 0.09
-
 local function brakeDistance(v, goal)
     local from, to = toMs(v), toMs(goal)
     if to >= from then return 0 end
     return (from * from - to * to) / (2 * DECEL)
 end
-
 function Controller.new()
     return setmetatable({stuckSince = nil, escapeUntil = nil, escapeSide = 0,
         blockedSince = nil, offset = 0, avoidSide = 0, gasOn = nil, obstacleHold = false,
         detourSide = 0, detourUntil = nil}, Controller)
 end
-
 function Controller:reset()
     self.stuckSince, self.escapeUntil, self.escapeSide = nil, nil, 0
     self.blockedSince = nil
@@ -97,7 +107,6 @@ function Controller:reset()
     self.rescan = nil
     self.escapeFrom, self.escapeDistance = nil, nil
 end
-
 local DETOUR = 2.5
 local DETOUR_MS = 6000
 local function detourSide(err, obstacleSide)
@@ -109,7 +118,6 @@ local function detourSide(err, obstacleSide)
     if need <= 3 then return toward end
     return needLeft < needRight and -1 or 1
 end
-
 function Controller:avoidAhead(data)
     if self.avoidSide < 0 and finite(data.sideRight) and data.sideRight < 3 then return true end
     if self.avoidSide > 0 and finite(data.sideLeft) and data.sideLeft < 3 then return true end
@@ -119,7 +127,6 @@ function Controller:avoidAhead(data)
     if dx * dx + dy * dy > 45 * 45 then return false end
     return dx * -math.sin(rad) + dy * math.cos(rad) > -6
 end
-
 function Controller:planAvoid(data, want, towardSide)
     local gap = data.obstacle
     if data.avoid == "none" then self.avoidSide = 0 end
@@ -155,7 +162,6 @@ function Controller:planAvoid(data, want, towardSide)
     end
     return self.offset
 end
-
 local NUDGE_MS = 4000
 function Controller:startEscape(out, data, err, now, reason)
     self.stuckSince, self.blockedSince = nil, nil
@@ -195,7 +201,6 @@ function Controller:startEscape(out, data, err, now, reason)
     out.detail.escape = plan and "scan" or "blind"
     return out
 end
-
 function Controller:update(data, now)
     local out = {throttle = 0, brake = 0, steer = 0, handbrake = false, detail = {}}
     if type(data) ~= "table" or type(data.position) ~= "table" then
@@ -211,7 +216,6 @@ function Controller:update(data, now)
         out.brake, out.handbrake = 1, true
         return out
     end
-
     local speed = finite(data.speed) and data.speed or 0
     local cruise = finite(data.limit) and data.limit > 5 and data.limit or CRUISE
     if finite(data.jitter) then cruise = math.max(12, cruise + data.jitter) end
@@ -219,7 +223,6 @@ function Controller:update(data, now)
     local dy = data.target.y - data.position.y
     local dist = finite(data.distance) and data.distance or math.sqrt(dx * dx + dy * dy)
     local heading = finite(data.heading) and data.heading or 0
-
     local turn = 0
     if type(data.nextTarget) == "table" and dist > 0.5 then
         local tx, ty = data.nextTarget.x - data.target.x, data.nextTarget.y - data.target.y
@@ -237,9 +240,7 @@ function Controller:update(data, now)
             out.detail.turn_after = turnAfter
         end
     end
-
     local apex = 0
-
     local detour = 0
     if self.detourUntil and now < self.detourUntil then
         detour = self.detourSide * DETOUR
@@ -268,7 +269,6 @@ function Controller:update(data, now)
     local err = angle(bearingTo(dx, dy) - heading)
     out.detail.err = err
     out.detail.dist = dist
-
     local arrive = finite(data.arrive) and data.arrive or 5
     if data.stopAt and (dist <= arrive or (dist <= 5 and math.abs(err) > 90)) then
         out.reason = "arrived"
@@ -277,7 +277,6 @@ function Controller:update(data, now)
         self.stuckSince, self.blockedSince = nil, nil
         return out
     end
-
     if self.escapeUntil and now < self.escapeUntil then
         local moved = self.escapeFrom and math.sqrt((data.position.x - self.escapeFrom.x) ^ 2
             + (data.position.y - self.escapeFrom.y) ^ 2) or 0
@@ -314,7 +313,6 @@ function Controller:update(data, now)
         self.stuckSince, self.blockedSince = nil, nil
         return out
     end
-
     if self.rescan and math.abs(speed) < 1 then
         self.rescan = nil
         return self:startEscape(out, data, err, now, "escape_rescan")
@@ -348,7 +346,6 @@ function Controller:update(data, now)
     elseif self.nudgeUntil then
         self.nudgeUntil = nil
     end
-
     local corner = cornerSpeed(turn, cruise)
     local goal = cruise
     if dist - 5 <= brakeDistance(speed, corner) * 1.25 then goal = corner end
@@ -367,14 +364,11 @@ function Controller:update(data, now)
         out.detail.path_speed = data.pathSpeed
     end
     if data.finishing then goal = math.min(goal, 20) end
-
     if math.abs(err) >= 130 then goal = math.min(goal, 8) end
-
     if data.stopAt then
         local room = math.max(0, dist - math.min(arrive, 3) * 0.5)
         goal = math.min(goal, toUnits(math.sqrt(2 * DECEL * room)))
     end
-
     if finite(data.obstacle) then
         local gap = data.obstacle
         out.detail.obstacle = gap
@@ -403,7 +397,6 @@ function Controller:update(data, now)
     end
     if finite(data.curb) and data.curb < 25 then goal = math.min(goal, 25) end
     out.detail.corner = corner
-
     local atLight = false
     if data.light then
         out.detail.light = data.light.green and "green" or "red"
@@ -419,12 +412,10 @@ function Controller:update(data, now)
             end
         end
     end
-
     if data.depot then
         goal = math.min(goal, finite(data.depotSpeed) and data.depotSpeed or 18)
         out.detail.depot = true
     end
-
     local wantSpray = data.spray ~= false
     if speed >= SPRAY_ON_SPEED then wantSpray = true
     elseif speed < SPRAY_OFF_SPEED then wantSpray = false end
@@ -440,7 +431,6 @@ function Controller:update(data, now)
     end
     if data.depot then wantSpray = false end
     out.spray = wantSpray
-
     local ms = toMs(speed)
     local aimDist = math.sqrt(dx * dx + dy * dy)
     local lookahead = math.min(aimDist, clamp(ms * 2.0, 15, 40))
@@ -454,7 +444,6 @@ function Controller:update(data, now)
     end
     out.steer = steerForCurvature(curvature, ms)
     out.detail.curvature = curvature
-
     local sideLeft, sideRight = data.sideLeft, data.sideRight
     out.detail.side_left, out.detail.side_right = sideLeft, sideRight
     local function trim(gap)
@@ -463,7 +452,6 @@ function Controller:update(data, now)
     end
     if out.steer > 0 then out.steer = out.steer * trim(sideLeft)
     elseif out.steer < 0 then out.steer = out.steer * trim(sideRight) end
-
     local nearest = math.min(finite(sideLeft) and sideLeft or 99,
         finite(sideRight) and sideRight or 99)
     local turningInto = (out.steer > 0.15 and finite(sideLeft) and sideLeft < 2.2)
@@ -475,16 +463,13 @@ function Controller:update(data, now)
         goal = math.min(goal, nearest < 1.4 and 20 or 34)
         out.detail.side_tight = nearest
     end
-
     if math.abs(curvature) > 1e-4 then
         local need = 1 / math.abs(curvature)
         local safe = math.max(toUnits(speedForRadius(need * 0.85)), 8)
         out.detail.turn_limit = safe
         goal = math.min(goal, safe)
     end
-
     if speed > cruise + 6 then goal = math.min(goal, cruise) end
-
     out.detail.goal = goal
     local diff = goal - speed
     if goal <= 0 then
@@ -500,7 +485,6 @@ function Controller:update(data, now)
         out.throttle = self.gasOn and clamp(diff / 10, 0.12, 1) or 0
     end
     out.detail.gas_on = self.gasOn == true
-
     local kind = data.obstacleKind or (data.obstacleVehicle and "queue") or "static"
     local waitVehicle = kind == "queue" or kind == "traffic" or data.yield
     local redAhead = data.light ~= nil and not data.light.green
@@ -515,7 +499,6 @@ function Controller:update(data, now)
     else
         self.blockedSince = nil
     end
-
     if out.throttle > 0.3 and speed < 3 and not redAhead and not atLight then
         self.stuckSince = self.stuckSince or now
         if now - self.stuckSince >= 2500 then
@@ -528,7 +511,6 @@ function Controller:update(data, now)
     out.reason = out.brake > 0 and "brake" or "drive"
     return out
 end
-
 local native = {log = dfPlowLog, update = dfPlowUpdate, command = dfPlowTakeCommand,
     alert = dfPlayAlertSignal, key = dfEmulateKey, marks = dfPlowMarks}
 for _, name in ipairs({"log", "update", "command"}) do
@@ -545,20 +527,19 @@ local bridge = {
 if type(native.marks) == "function" then
     bridge.marks = function(action, text) return native.marks(action, text or "", lease) end
 end
-
 local NULL = setmetatable({}, {__tostring = function() return "null" end})
 local state = {
     bot = false, autonomy = false, recording = false, closed = false,
     status = "Ожидание", report = {}, failures = {}, hooks = {}, hookStatus = {},
     owned = false, trips = 0, frame = 0, buffer = {}, bufferBytes = 0,
     speedLimitSpeedo = 50, speedLimit = 50, debug = false,
+    signals = true, dtpStop = true,
+    autoRecord = true,
 }
 local controller = Controller.new()
-
 local function elapsed(now, previous)
     return previous and (now - previous) % 4294967296 or math.huge
 end
-
 local function read(name, ...)
     local fn = _G[name]
     if type(fn) ~= "function" then state.failures[name] = "unavailable"; return nil end
@@ -570,11 +551,9 @@ local function read(name, ...)
     state.failures[name] = nil
     return a, b, c, d, e, f
 end
-
 local function valid(element)
     return element ~= nil and read("isElement", element) == true
 end
-
 local function quote(value)
     return '"' .. tostring(value):gsub('[%z\1-\31\\"]', function(char)
         if char == '"' then return '\\"' end
@@ -582,7 +561,6 @@ local function quote(value)
         return string.format("\\u%04x", string.byte(char))
     end) .. '"'
 end
-
 local function json(value, depth)
     depth = depth or 0
     if value == NULL or value == nil then return "null" end
@@ -605,14 +583,12 @@ local function json(value, depth)
     end
     return "{" .. table.concat(out, ",") .. "}"
 end
-
 local function flush(force)
     if #state.buffer == 0 then return end
     local text = table.concat(state.buffer)
     state.buffer, state.bufferBytes = {}, 0
     bridge.log(text, force == true)
 end
-
 local function emit(kind, payload, force)
     if not state.recording and not force then return end
     local line = '{"type":' .. quote(kind) .. ',"tick":' .. getTickCount()
@@ -622,7 +598,6 @@ local function emit(kind, payload, force)
     state.bufferBytes = state.bufferBytes + #line
     if force or state.bufferBytes > 16384 then flush(force) end
 end
-
 local function note(text)
     local stamp = string.format("%02d:%02d", math.floor(getTickCount() / 60000) % 60,
         math.floor(getTickCount() / 1000) % 60)
@@ -633,19 +608,16 @@ local function note(text)
     bridge.update("report", table.concat(state.report, "\n"))
     emit("note", {text = text}, true)
 end
-
 local function routeId()
     local id = _G.CURRENT_ROUTE_ID
     return type(id) == "number" and id or nil
 end
-
 local function routePoints()
     local id = routeId()
     if not id or type(_G.tRoutesPoints) ~= "table" then return nil end
     local points = _G.tRoutesPoints[id]
     return type(points) == "table" and points or nil
 end
-
 local function pointAt(index)
     local points = routePoints()
     if not points or type(points[index]) ~= "table" then return nil end
@@ -655,7 +627,6 @@ local function pointAt(index)
     if not ok or not finite(x) or not finite(y) then return nil end
     return {x = x, y = y, z = z}
 end
-
 local function liveTarget()
     local shape = read("getCurrentColshape")
     if not shape or read("isElement", shape) ~= true then return nil end
@@ -663,48 +634,39 @@ local function liveTarget()
     if not finite(x) or not finite(y) then return nil end
     return {x = x, y = y, z = finite(z) and z or 0}
 end
-
 local function pointIndex()
     local index = _G.CURRENT_POSITION_ID
     return type(index) == "number" and index > 0 and index or nil
 end
-
 local function jobVehicle()
     local vehicle = read("getJobVehicle")
     return valid(vehicle) and vehicle or nil
 end
-
 local function occupied()
     local vehicle = read("getPedOccupiedVehicle", localPlayer)
     return valid(vehicle) and vehicle or nil
 end
-
 local function sprayOn(vehicle)
     return read("isActiveWaterSpray", vehicle) and true or false
 end
-
 local function waterPercent()
     local value = read("getAmmountSpray")
     return finite(value) and value or nil
 end
-
 local function routeProgress()
     local value = read("getRouteCompleted")
     return finite(value) and value or nil
 end
-
 local function speedOf(vehicle)
     local value = read("getVehicleSpeed", vehicle)
     return finite(value) and value or 0
 end
-
 local function requiredSpeed(id)
     local dist = type(_G.tDist) == "table" and _G.tDist[id]
     local water = type(_G.tWaterCapacity) == "table" and _G.tWaterCapacity[id]
     if not finite(dist) or not finite(water) or water <= 0 then return nil end
     return dist / (water / WATER_RATE) * 3.6 / REAL_KMH
 end
-
 local function routeScore(id)
     local dist = type(_G.tDist) == "table" and _G.tDist[id]
     local coef = type(_G.tRouteCoef) == "table" and _G.tRouteCoef[id] or 1
@@ -718,7 +680,6 @@ local function routeScore(id)
     if need then score = score * (1 + (CRUISE - need) / 200) end
     return score
 end
-
 local function bestRoute()
     local best, bestId
     for id = 1, 9 do
@@ -727,7 +688,6 @@ local function bestRoute()
     end
     return bestId, best
 end
-
 local function routeDescription(id)
     local info = type(_G.tRoutes) == "table" and _G.tRoutes[id]
     local dist = type(_G.tDist) == "table" and _G.tDist[id]
@@ -741,7 +701,6 @@ local function routeDescription(id)
         salary and math.floor(salary) or "?",
         need and string.format("%.0f по спидометру", need * SPEEDO) or "?")
 end
-
 local K = {}
 K.WAYPOINT_SEE = 70
 K.WAYPOINT_CONE = 50
@@ -770,7 +729,156 @@ local WAYPOINTS = {
     {2195.39, 2509.72, 126.2, 4, 1},
     {2267.22, 2416.86, 210.3, 6, 1},
 }
-
+local City = {
+    list = {
+        {name = "Приволжск", base = {2237.61, 2451.32}},
+        {name = "Мирный", base = {14.71, 506.36},
+            gate = {16.24, 434.07, 184.2, 3.0},
+            finish = {15.90, 551.19, 358.9, 4.5},
+            exit = {{14.68, 506.36}, {12.37, 504.27}, {11.22, 501.42}, {11.12, 484.04},
+                {13.12, 459.96}, {15.87, 434.53}, {15.72, 431.41}, {14.45, 427.40}, {11.78, 423.75},
+                {7.89, 421.00}, {3.67, 419.57}},
+            entry = {{17.17, 431.76}, {16.27, 440.56}, {15.80, 456.11}, {15.51, 486.70},
+                {15.35, 503.10}, {15.96, 533.39}, {16.31, 551.04}}},
+        {name = "Невский", base = {2107.35, -2830.59}},
+    },
+    ROLES = {"gate", "finish"},
+    LABEL = {gate = "ворота", finish = "финиш"},
+    REACH = 1500,
+    SAME = 2.0,
+}
+function City.depot(x, y)
+    local best, bestIndex, bestDistance
+    for index, city in ipairs(City.list) do
+        local d = (x - city.base[1]) ^ 2 + (y - city.base[2]) ^ 2
+        if not bestDistance or d < bestDistance then best, bestIndex, bestDistance = city, index, d end
+    end
+    return best, bestIndex, bestDistance and math.sqrt(bestDistance)
+end
+function City.of(first)
+    if not first then return nil end
+    local city, _, d = City.depot(first.x, first.y)
+    return d and d <= City.REACH and city or nil
+end
+function City.network()
+    if City.net then return City.net end
+    local all = _G.tRoutesPoints
+    if type(all) ~= "table" then return nil end
+    local net = {routes = {}, points = {}}
+    for id, points in pairs(all) do
+        if type(id) == "number" and type(points) == "table" then
+            local list = {}
+            for _, entry in ipairs(points) do
+                local v = type(entry) == "table" and entry[1]
+                local ok, x, y = pcall(function() return v.x, v.y end)
+                if ok and finite(x) and finite(y) then list[#list + 1] = {x, y} end
+            end
+            if #list > 0 then
+                local _, cityIndex = City.depot(list[1][1], list[1][2])
+                net.routes[id] = cityIndex
+                net.points[cityIndex] = net.points[cityIndex] or {}
+                for _, p in ipairs(list) do table.insert(net.points[cityIndex], p) end
+            end
+        end
+    end
+    City.net = net
+    return net
+end
+function City.near(x, y)
+    local net = City.network()
+    if not net then return City.depot(x, y) end
+    local best, bestIndex
+    for index in ipairs(City.list) do
+        for _, p in ipairs(net.points[index] or {}) do
+            local d = (x - p[1]) ^ 2 + (y - p[2]) ^ 2
+            if not best or d < best then best, bestIndex = d, index end
+        end
+    end
+    if not bestIndex then return City.depot(x, y) end
+    return City.list[bestIndex], bestIndex, math.sqrt(best)
+end
+function City.ofMark(point)
+    local net = City.network()
+    local index = net and point[5] and net.routes[point[5]]
+    if index then return City.list[index], index end
+    local city, cityIndex = City.near(point[1], point[2])
+    return city, cityIndex
+end
+function City.at(x, y)
+    for _, city in ipairs(City.list) do
+        for _, role in ipairs(City.ROLES) do
+            local p = city[role]
+            if p and math.sqrt((x - p[1]) ^ 2 + (y - p[2]) ^ 2) <= City.SAME then return city, role end
+        end
+    end
+    return nil
+end
+function City.routes(index)
+    local out = {}
+    local net = City.network()
+    for id, cityIndex in pairs(net and net.routes or {}) do
+        if cityIndex == index then out[#out + 1] = id end
+    end
+    table.sort(out)
+    return out
+end
+function City.parse(text)
+    for name, label, x, y, h, r in text:gmatch(
+        "%-%-!город%s+(%S+)%s+(%S+)%s+([-%d%.]+),%s*([-%d%.]+),%s*([-%d%.]+),%s*([-%d%.]+)") do
+        x, y, h, r = tonumber(x), tonumber(y), tonumber(h), tonumber(r)
+        for _, city in ipairs(City.list) do
+            for _, role in ipairs(City.ROLES) do
+                if city.name == name and City.LABEL[role] == label and finite(x) and finite(y) then
+                    city[role] = {x, y, finite(h) and h or 0, finite(r) and r or 3}
+                end
+            end
+        end
+    end
+end
+function City.serialize()
+    local lines = {}
+    for _, city in ipairs(City.list) do
+        for _, role in ipairs(City.ROLES) do
+            local p = city[role]
+            if p then
+                lines[#lines + 1] = string.format("--!город %s %s %.2f, %.2f, %.1f, %.2f", city.name,
+                    City.LABEL[role], p[1], p[2], p[3] or 0, p[4] or 3)
+            end
+        end
+    end
+    if #lines == 0 then return "" end
+    table.insert(lines, 1, "-- Точки городов: ворота депо и финиш. Не метки — правятся в эдиторе, раздел города.")
+    return table.concat(lines, "\n") .. "\n"
+end
+local Bumps = {list = {}, SAME = 1.5, STEP = 0.5, MOST = 1.5}
+function Bumps.learn(x, y)
+    for _, b in ipairs(Bumps.list) do
+        if (b[1] - x) ^ 2 + (b[2] - y) ^ 2 < Bumps.SAME * Bumps.SAME then
+            b[3] = b[3] + 1
+            return b
+        end
+    end
+    local b = {x, y, 1}
+    Bumps.list[#Bumps.list + 1] = b
+    return b
+end
+function Bumps.margin(b) return math.min(Bumps.MOST, Bumps.STEP * b[3]) end
+function Bumps.parse(text)
+    local list = {}
+    for x, y, hits in text:gmatch("%-%-!удар%s+([-%d%.]+),%s*([-%d%.]+),%s*(%d+)") do
+        x, y, hits = tonumber(x), tonumber(y), tonumber(hits)
+        if finite(x) and finite(y) and finite(hits) then list[#list + 1] = {x, y, hits} end
+    end
+    return list
+end
+function Bumps.serialize()
+    if #Bumps.list == 0 then return "" end
+    local lines = {"-- Удары бота: x, y, сколько раз. Здесь бот проходит с запасом; удалишь строку — забудет."}
+    for _, b in ipairs(Bumps.list) do
+        lines[#lines + 1] = string.format("--!удар %.2f, %.2f, %d", b[1], b[2], b[3])
+    end
+    return table.concat(lines, "\n") .. "\n"
+end
 local function waypointNear(position, heading, radius)
     if not position then return nil end
     local best, bestDistance
@@ -784,10 +892,8 @@ local function waypointNear(position, heading, radius)
     end
     return best, bestDistance
 end
-
 K.WAYPOINT_REACH = 200
 K.WAYPOINT_BEHIND = 110
-
 local function waypointStart(position)
     if #WAYPOINTS == 0 or not position then return 1 end
     local best, bestDistance = 1, nil
@@ -799,7 +905,6 @@ local function waypointStart(position)
     end
     return best
 end
-
 local function waypointNext(position, heading, targetDistance)
     if #WAYPOINTS == 0 or not position or not finite(heading) then return nil end
     local cursor = state.waypointCursor or 1
@@ -841,7 +946,6 @@ local function waypointNext(position, heading, targetDistance)
     end
     return nil
 end
-
 local function waypointAhead(position, heading, targetDistance)
     if not position or not finite(heading) then return nil end
     local best, bestDistance, bestIndex
@@ -862,7 +966,6 @@ local function waypointAhead(position, heading, targetDistance)
     if not best then return nil end
     return best, bestDistance, bestIndex
 end
-
 local function waypointAim(point, position, heading)
     local cx, cy = point[1], point[2]
     local radius = point[4] or K.WAYPOINT_MID
@@ -879,7 +982,6 @@ local function waypointAim(point, position, heading)
     local k = radius * 0.5 / away
     return {x = cx + (px - cx) * k, y = cy + (py - cy) * k, z = position.z}
 end
-
 local function marksSerialize()
     local lines = {
         "-- PlowBot: метки проезда. Файл пишет эдитор меток; порядок строк — порядок проезда.",
@@ -890,9 +992,8 @@ local function marksSerialize()
             point[1], point[2], point[3] or 0, point[4] or K.WAYPOINT_MID,
             point[5] and tostring(point[5]) or "nil")
     end
-    return table.concat(lines, "\n") .. "\n"
+    return table.concat(lines, "\n") .. "\n" .. City.serialize() .. Bumps.serialize()
 end
-
 local function marksParse(text)
     local list, bad = {}, 0
     for line in (text .. "\n"):gmatch("([^\n]*)\n") do
@@ -910,7 +1011,6 @@ local function marksParse(text)
     end
     return list, bad
 end
-
 local function marksSave(reason)
     if not bridge.marks then
         state.marksFile = "DLL без файла меток — правки живут до перезахода"
@@ -928,7 +1028,6 @@ local function marksSave(reason)
         error = ok and nil or tostring(err)}, true)
     return ok == true
 end
-
 local function marksLoad()
     if not bridge.marks then
         state.marksFile = "DLL без файла меток — метки из кода"
@@ -947,11 +1046,22 @@ local function marksLoad()
         emit("marks_rejected", {bad = bad, good = #list}, true)
         return
     end
-    WAYPOINTS = list
+    City.parse(text)
+    local kept, cityPoints = {}, 0
+    for _, point in ipairs(list) do
+        if not point[5] and City.at(point[1], point[2]) then
+            cityPoints = cityPoints + 1
+        else
+            kept[#kept + 1] = point
+        end
+    end
+    WAYPOINTS = kept
+    Bumps.list = Bumps.parse(text)
     state.planDirty = true
-    state.marksFile = string.format("Метки из PlowMarks.txt: %d", #list)
+    state.marksFile = string.format("Метки из PlowMarks.txt: %d", #kept)
+        .. (cityPoints > 0 and string.format(" (ещё %d — точки города, не метки)", cityPoints) or "")
+        .. (#Bumps.list > 0 and string.format(", выученных ударов: %d", #Bumps.list) or "")
 end
-
 local function waypointDump()
     local parts = {}
     for _, point in ipairs(WAYPOINTS) do
@@ -963,24 +1073,25 @@ local function waypointDump()
     emit("waypoint_table", {count = #WAYPOINTS, lua = text}, true)
     return text
 end
-
 local placeInOrder
-
 local function waypointSave(position, heading, radius)
     if not position then
         note("Метка: не вижу машину")
         return
     end
     radius = clamp(finite(radius) and radius or K.WAYPOINT_MID, K.WAYPOINT_MIN, K.WAYPOINT_MAX)
+    local route = state.workRoute or routeId() or state.lastRoute
     local index = waypointNear(position, heading, K.WAYPOINT_SAME)
     if index then
         WAYPOINTS[index] = {position.x, position.y, finite(heading) and heading or 0, radius,
-            routeId()}
+            route}
     else
-        local point = {position.x, position.y, finite(heading) and heading or 0, radius, routeId()}
+        local point = {position.x, position.y, finite(heading) and heading or 0, radius, route}
         index = placeInOrder and placeInOrder(point) or (#WAYPOINTS + 1)
         table.insert(WAYPOINTS, index, point)
-        if state.editSel and state.editSel >= index then state.editSel = state.editSel + 1 end
+        if type(state.editSel) == "number" and state.editSel >= index then
+            state.editSel = state.editSel + 1
+        end
         if state.waypointCursor and state.waypointCursor >= index then
             state.waypointCursor = state.waypointCursor + 1
         end
@@ -999,7 +1110,6 @@ local function waypointSave(position, heading, radius)
     waypointDump()
     marksSave("новая метка #" .. index)
 end
-
 local function waypointResize(radius)
     if not finite(radius) then return end
     local index = state.lastWaypoint
@@ -1015,7 +1125,6 @@ local function waypointResize(radius)
     emit("waypoint_resized", {index = index, radius = WAYPOINTS[index][4]}, true)
     marksSave("зона #" .. index)
 end
-
 local function waypointForget(position, heading)
     local index = waypointNear(position, heading, K.WAYPOINT_SEE)
     if not index then
@@ -1027,12 +1136,10 @@ local function waypointForget(position, heading)
     note(string.format("Метка #%d удалена, осталось %d", index, #WAYPOINTS))
     waypointDump()
     state.editUndo = {}
-    if state.editSel and state.editSel > #WAYPOINTS then state.editSel = #WAYPOINTS end
+    if type(state.editSel) == "number" and state.editSel > #WAYPOINTS then state.editSel = #WAYPOINTS end
     marksSave("удалена #" .. index)
 end
-
 local EDIT_UNDO_MAX = 200
-
 local function cameraAxes(fallbackHeading)
     local cx, cy, _, lx, ly = read("getCameraMatrix")
     local fx, fy
@@ -1045,7 +1152,6 @@ local function cameraAxes(fallbackHeading)
     fx, fy = fx / length, fy / length
     return fx, fy, fy, -fx
 end
-
 local function carPosition()
     local vehicle = jobVehicle() or occupied() or localPlayer
     if not vehicle then return nil end
@@ -1054,38 +1160,50 @@ local function carPosition()
     if not finite(x) or not finite(y) then return nil end
     return {x = x, y = y, z = finite(z) and z or 0}, finite(rz) and rz or nil
 end
-
+local function editorPoint(sel)
+    if sel == nil then sel = state.editSel end
+    if type(sel) == "number" then
+        return WAYPOINTS[sel], string.format("#%d", sel)
+    end
+    local city = City.list[state.editCity or 0]
+    if city and (sel == "gate" or sel == "finish") and city[sel] then
+        return city[sel], city.name .. ": " .. City.LABEL[sel]
+    end
+    return nil
+end
 local function editorSelect(index)
-    if not index or not WAYPOINTS[index] then
-        note("Эдитор: такой метки нет")
+    if index == nil or not editorPoint(index) then
+        note(type(index) == "string" and "Эдитор: у этого города такой точки ещё нет"
+            or "Эдитор: такой метки нет")
         return
     end
     state.editSel = index
-    state.lastWaypoint = index
+    if type(index) == "number" then state.lastWaypoint = index end
 end
-
 local function editorNearest()
     local position = carPosition()
     if not position then return nil end
     local best, bestDistance
     for index, point in ipairs(WAYPOINTS) do
-        local d = math.sqrt((point[1] - position.x) ^ 2 + (point[2] - position.y) ^ 2)
-        if not bestDistance or d < bestDistance then best, bestDistance = index, d end
+        local _, cityIndex = City.ofMark(point)
+        if not state.editCity or cityIndex == state.editCity then
+            local d = math.sqrt((point[1] - position.x) ^ 2 + (point[2] - position.y) ^ 2)
+            if not bestDistance or d < bestDistance then best, bestDistance = index, d end
+        end
     end
     return best
 end
-
-local function editorRemember(index)
-    local point = WAYPOINTS[index]
+local function editorRemember(sel)
+    local point = editorPoint(sel)
+    if not point then return end
     state.editUndo = state.editUndo or {}
-    table.insert(state.editUndo, {index = index, count = #WAYPOINTS,
+    table.insert(state.editUndo, {index = sel, city = state.editCity, count = #WAYPOINTS,
         point = {point[1], point[2], point[3], point[4], point[5]}})
     if #state.editUndo > EDIT_UNDO_MAX then table.remove(state.editUndo, 1) end
 end
-
 local function editorNudge(direction, step)
     local index = state.editSel
-    local point = index and WAYPOINTS[index]
+    local point, label = editorPoint(index)
     step = tonumber(step)
     if not point or not finite(step) then return end
     step = clamp(step, 0.05, 10)
@@ -1100,12 +1218,11 @@ local function editorNudge(direction, step)
     editorRemember(index)
     point[1], point[2] = point[1] + dx * step, point[2] + dy * step
     state.planDirty = true
-    marksSave(string.format("#%d сдвинута", index))
+    marksSave(label .. " сдвинута")
 end
-
 local function editorRadius(delta)
     local index = state.editSel
-    local point = index and WAYPOINTS[index]
+    local point, label = editorPoint(index)
     delta = tonumber(delta)
     if not point or not finite(delta) then return end
     local radius = clamp((point[4] or K.WAYPOINT_MID) + delta, K.WAYPOINT_MIN, K.WAYPOINT_MAX)
@@ -1113,15 +1230,16 @@ local function editorRadius(delta)
     editorRemember(index)
     point[4] = radius
     state.planDirty = true
-    marksSave(string.format("#%d зона %g м", index, radius))
+    marksSave(string.format("%s зона %g м", label, radius))
 end
-
 local function editorOrder(delta)
     local index = state.editSel
-    local point = index and WAYPOINTS[index]
+    local point = type(index) == "number" and WAYPOINTS[index]
     if not point or (delta ~= 1 and delta ~= -1) then return end
     local j = index + delta
-    while WAYPOINTS[j] and WAYPOINTS[j][5] ~= point[5] do j = j + delta end
+    while WAYPOINTS[j] and point[5] and WAYPOINTS[j][5] and WAYPOINTS[j][5] ~= point[5] do
+        j = j + delta
+    end
     if not WAYPOINTS[j] then
         note(delta < 0 and "Эдитор: метка и так первая" or "Эдитор: метка и так последняя")
         return
@@ -1133,12 +1251,40 @@ local function editorOrder(delta)
     note(string.format("Эдитор: метка #%d стала #%d", index, j))
     marksSave(string.format("#%d → #%d", index, j))
 end
-
+local function editorBindRoute()
+    local index = state.editSel
+    local point = type(index) == "number" and WAYPOINTS[index]
+    if not point then return end
+    local route = state.workRoute or routeId() or state.lastRoute
+    if not route then
+        note("Эдитор: маршрут неизвестен — выбери его в «Создать маршрут» или возьми рейс")
+        return
+    end
+    if point[5] == route then
+        note(string.format("Эдитор: метка #%d уже на маршруте %d", index, route))
+        return
+    end
+    editorRemember(index)
+    point[5] = route
+    state.planDirty = true
+    note(string.format("Эдитор: метка #%d привязана к маршруту %d", index, route))
+    marksSave(string.format("#%d → маршрут %d", index, route))
+end
 local function editorUndo()
     local undo = state.editUndo or {}
     while #undo > 0 do
         local last = table.remove(undo)
-        if last.count == #WAYPOINTS and WAYPOINTS[last.index] then
+        if type(last.index) == "string" then
+            local city = City.list[last.city or 0]
+            local point = city and city[last.index]
+            if point then
+                for k = 1, 4 do point[k] = last.point[k] end
+                state.editCity, state.editSel = last.city, last.index
+                state.planDirty = true
+                marksSave(city.name .. ": " .. City.LABEL[last.index] .. " отмена")
+                return
+            end
+        elseif last.count == #WAYPOINTS and WAYPOINTS[last.index] then
             local point = WAYPOINTS[last.index]
             for k = 1, 5 do point[k] = last.point[k] end
             state.editSel, state.lastWaypoint = last.index, last.index
@@ -1149,7 +1295,38 @@ local function editorUndo()
     end
     note("Эдитор: отменять нечего")
 end
-
+local function editorCity(index)
+    if not City.list[index] then return end
+    if state.editCity ~= index then
+        state.editCity, state.editRoute = index, nil
+        if type(state.editSel) == "string" then state.editSel = nil end
+    end
+end
+local function editorWork(cityIndex, route)
+    local city = City.list[cityIndex]
+    if not city then return end
+    editorCity(cityIndex)
+    route = route and route > 0 and route or nil
+    state.editRoute, state.workRoute = route, route
+    note(route and string.format("Создаю маршрут %d (%s): новые метки ложатся в него", route, city.name)
+        or ("Работаю по городу " .. city.name .. ": новые метки — в маршрут рейса"))
+end
+local function editorCityPoint(role)
+    local city = City.list[state.editCity or 0]
+    if not city or not City.LABEL[role] then return end
+    local position, heading = carPosition()
+    if not position then
+        note("Эдитор: не вижу машину")
+        return
+    end
+    if city[role] then editorRemember(role) end
+    city[role] = {position.x, position.y, finite(heading) and heading or 0,
+        city[role] and city[role][4] or (role == "gate" and 3 or 4.5)}
+    state.editSel = role
+    state.planDirty = true
+    marksSave(city.name .. ": " .. City.LABEL[role] .. " поставлены здесь")
+    note(string.format("%s: %s — здесь", city.name, City.LABEL[role]))
+end
 local plan = {route = nil, items = {}, serverCount = 0}
 local Path = {}
 local PLAN_MID = 80
@@ -1164,16 +1341,13 @@ local PASS = {
     ghostTurn = 45,
     ghostAhead = 1.5,
 }
-
 local function segmentDistance(px, py, ax, ay, bx, by)
     local dx, dy = bx - ax, by - ay
     local length = dx * dx + dy * dy
     local t = length > 0 and clamp(((px - ax) * dx + (py - ay) * dy) / length, 0, 1) or 0
     return math.sqrt((px - ax - dx * t) ^ 2 + (py - ay - dy * t) ^ 2)
 end
-
 local locationOfRoute, homePoint
-
 local GUIDES = {
     [1] = {
         {1, 2150.20, 2456.24}, {1, 2134.70, 2468.78}, {1, 2118.97, 2480.42},
@@ -1198,8 +1372,59 @@ local GUIDES = {
         {51, 2304.70, 2563.54}, {52, 2261.46, 2552.07}, {52, 2243.61, 2544.85},
         {52, 2226.11, 2536.10}, {53, 2200.18, 2505.06},
     },
+    [4] = {
+        {8, -918.02, 420.20}, {8, -938.18, 419.80}, {8, -958.63, 419.32},
+        {8, -979.57, 418.13}, {9, -1015.81, 414.45}, {9, -1036.14, 411.91},
+        {9, -1056.64, 408.37}, {9, -1076.26, 404.18}, {9, -1096.19, 399.43},
+        {9, -1115.48, 394.12}, {10, -1153.81, 382.46}, {10, -1173.53, 374.89},
+        {10, -1192.81, 366.63}, {10, -1211.92, 357.95}, {11, -1247.98, 338.61},
+        {11, -1265.82, 328.10}, {11, -1282.69, 317.01}, {11, -1300.06, 305.02},
+        {12, -1319.02, 290.50}, {12, -1333.87, 276.06}, {12, -1347.67, 261.00},
+        {12, -1361.22, 244.58}, {13, -1374.57, 225.96}, {13, -1384.64, 207.96},
+        {13, -1393.14, 188.84}, {13, -1400.88, 169.26}, {13, -1407.45, 149.24},
+        {14, -1414.56, 127.69}, {14, -1420.52, 107.47}, {14, -1425.13, 87.24},
+        {14, -1429.14, 66.57}, {14, -1431.88, 45.76}, {15, -1438.10, 2.92},
+        {15, -1440.53, -17.33}, {15, -1442.10, -38.32}, {15, -1442.75, -59.17},
+        {18, -1443.14, -381.65}, {18, -1445.24, -402.56}, {18, -1450.48, -422.25},
+        {18, -1459.47, -440.32}, {18, -1471.95, -456.38}, {18, -1487.51, -469.62},
+        {19, -1507.03, -480.80}, {19, -1526.30, -487.11}, {19, -1545.50, -493.86},
+        {19, -1564.19, -503.57}, {19, -1580.67, -516.23}, {19, -1595.06, -531.28},
+        {20, -1605.83, -546.32}, {20, -1614.81, -564.88}, {20, -1625.78, -581.76},
+        {20, -1641.82, -593.58}, {21, -1677.41, -597.85}, {21, -1698.38, -598.28},
+        {21, -1719.37, -597.59}, {22, -1737.91, -590.16}, {22, -1752.28, -575.56},
+        {22, -1769.61, -566.07}, {22, -1789.90, -563.27}, {23, -1795.56, -563.71},
+        {23, -1813.91, -571.07}, {23, -1822.80, -589.37}, {23, -1826.19, -609.87},
+        {24, -1824.99, -621.32}, {24, -1814.54, -639.69}, {24, -1796.39, -647.50},
+        {24, -1775.79, -649.59}, {25, -1764.29, -647.35}, {25, -1746.28, -632.46},
+        {25, -1729.49, -620.92}, {26, -1720.64, -619.53}, {26, -1700.40, -618.99},
+        {26, -1679.53, -619.54}, {26, -1658.58, -620.67}, {26, -1638.85, -623.97},
+        {27, -1630.69, -627.84}, {27, -1617.54, -642.95}, {27, -1609.96, -661.67},
+        {27, -1603.00, -680.52}, {27, -1595.87, -699.80}, {28, -1568.99, -772.55},
+        {28, -1561.64, -792.42}, {29, -1544.91, -830.12}, {29, -1535.54, -848.24},
+        {29, -1525.30, -866.10}, {29, -1513.95, -883.14}, {29, -1501.03, -899.63},
+        {30, -1487.15, -919.44}, {30, -1483.16, -939.34}, {30, -1484.80, -960.15},
+        {30, -1487.61, -980.03}, {31, -1492.24, -994.70}, {31, -1503.37, -1012.36},
+        {31, -1519.41, -1025.26}, {31, -1537.97, -1033.01}, {31, -1558.23, -1036.36},
+        {35, -1869.55, -1036.67}, {35, -1890.31, -1036.60}, {35, -1911.33, -1036.53},
+        {35, -1931.61, -1036.34}, {35, -1951.83, -1033.03}, {36, -1970.53, -1023.10},
+        {36, -1984.79, -1008.28}, {36, -1995.14, -991.13}, {36, -2000.52, -971.03},
+        {36, -2001.56, -950.66}, {48, -2001.81, 366.36}, {48, -1991.24, 382.56},
+        {48, -1970.93, 380.44}, {51, -1659.51, 377.44}, {51, -1639.14, 377.42},
+        {52, -1588.68, 374.36}, {52, -1568.22, 372.78}, {52, -1548.30, 370.19},
+        {52, -1528.32, 367.42}, {52, -1507.69, 363.64}, {52, -1488.14, 359.07},
+        {53, -1467.33, 352.87}, {53, -1447.82, 345.89}, {53, -1428.89, 337.76},
+        {53, -1410.45, 329.34}, {53, -1391.69, 319.98}, {53, -1374.21, 308.81},
+        {53, -1357.71, 297.45}, {54, -1347.04, 289.47}, {54, -1329.66, 279.23},
+        {54, -1309.80, 277.20}, {54, -1289.27, 280.76}, {55, -1261.98, 295.25},
+        {55, -1243.68, 305.33}, {55, -1225.80, 314.62}, {55, -1207.21, 324.26},
+        {55, -1188.99, 333.72}, {55, -1169.71, 342.34}, {55, -1150.90, 349.27},
+        {55, -1131.51, 356.27}, {56, -1097.09, 367.03}, {56, -1077.42, 371.80},
+        {56, -1056.96, 376.40}, {56, -1036.82, 380.03}, {56, -1016.50, 382.55},
+        {56, -995.75, 384.83}, {56, -975.70, 387.03}, {56, -954.78, 388.78},
+        {63, -104.45, 388.89}, {63, -84.04, 390.68}, {63, -62.97, 393.00},
+        {63, -41.92, 395.01}, {63, -21.80, 397.19}, {63, -1.77, 399.45},
+    },
 }
-
 Path.LINE = {
     [1] = {
         {0, 2237.63, 2451.34}, {0, 2237.93, 2455.28}, {0, 2236.12, 2458.60}, {0, 2234.05, 2460.04},
@@ -1377,10 +1602,112 @@ Path.LINE = {
         {53, 2200.18, 2505.06}, {53, 2202.21, 2499.37}, {54, 2211.69, 2488.84}, {54, 2232.27, 2464.77},
         {54, 2254.35, 2434.74}, {54, 2267.61, 2417.69},
     },
+    [4] = {
+        {0, 14.68, 506.36}, {0, 12.37, 504.27}, {0, 11.22, 501.42}, {0, 11.12, 484.04},
+        {0, 13.12, 459.96}, {0, 15.87, 434.53}, {0, 15.72, 431.41}, {0, 14.45, 427.40},
+        {0, 11.78, 423.75}, {0, 7.89, 421.00}, {0, 3.67, 419.57}, {1, -26.59, 419.38},
+        {1, -44.23, 419.12}, {1, -75.26, 419.35}, {2, -106.23, 419.59}, {2, -136.76, 419.80},
+        {2, -167.55, 420.01}, {2, -197.68, 420.22}, {3, -228.26, 420.44}, {3, -259.14, 420.65},
+        {3, -280.72, 420.81}, {3, -311.09, 420.61}, {3, -334.92, 420.56}, {4, -352.32, 420.97},
+        {4, -382.59, 421.01}, {4, -413.39, 421.07}, {4, -444.31, 421.14}, {4, -448.44, 421.14},
+        {4, -478.60, 420.70}, {5, -508.76, 420.28}, {5, -531.69, 419.97}, {5, -562.70, 420.04},
+        {5, -593.70, 419.86}, {5, -608.24, 419.78}, {6, -638.96, 418.60}, {6, -648.08, 418.39},
+        {6, -678.34, 419.27}, {6, -704.96, 420.07}, {6, -735.92, 420.35}, {7, -766.65, 420.64},
+        {7, -797.38, 420.93}, {7, -828.05, 421.22}, {7, -854.69, 421.47}, {8, -885.86, 420.83},
+        {8, -916.69, 420.22}, {8, -947.91, 419.61}, {8, -972.86, 418.78}, {9, -1003.62, 415.79},
+        {9, -1013.62, 414.74}, {9, -1036.14, 411.91}, {9, -1057.84, 408.16}, {9, -1088.04, 401.39},
+        {9, -1096.19, 399.43}, {9, -1125.26, 391.40}, {10, -1152.56, 382.91}, {10, -1181.13, 371.78},
+        {10, -1208.93, 359.43}, {10, -1212.97, 357.42}, {11, -1239.47, 343.18}, {11, -1247.98, 338.61},
+        {11, -1261.75, 330.63}, {11, -1283.69, 316.35}, {11, -1306.57, 300.45}, {12, -1319.02, 290.50},
+        {12, -1327.53, 282.61}, {12, -1342.74, 266.58}, {12, -1351.76, 256.35}, {13, -1370.11, 233.01},
+        {13, -1376.92, 222.07}, {13, -1383.96, 209.22}, {13, -1395.94, 182.36}, {13, -1402.17, 165.76},
+        {14, -1411.80, 136.16}, {14, -1414.18, 128.90}, {14, -1420.19, 108.70}, {14, -1427.16, 78.41},
+        {14, -1427.37, 77.46}, {14, -1430.77, 56.33}, {14, -1433.73, 29.11}, {15, -1438.72, -1.50},
+        {15, -1439.32, -5.83}, {15, -1441.96, -34.45}, {15, -1442.71, -53.57}, {16, -1442.92, -84.41},
+        {16, -1442.97, -114.57}, {16, -1442.98, -144.78}, {16, -1442.98, -175.64}, {16, -1442.98, -206.83},
+        {16, -1442.99, -237.71}, {17, -1443.00, -268.45}, {17, -1443.01, -298.72}, {17, -1443.02, -328.80},
+        {17, -1443.04, -359.69}, {18, -1443.04, -378.43}, {18, -1443.41, -387.29}, {18, -1444.80, -400.07},
+        {18, -1447.25, -412.14}, {18, -1451.24, -424.21}, {18, -1457.45, -436.99}, {18, -1465.04, -448.37},
+        {18, -1471.95, -456.38}, {18, -1479.24, -463.09}, {19, -1494.56, -474.55}, {19, -1502.97, -479.07},
+        {19, -1512.14, -482.81}, {19, -1535.21, -489.83}, {19, -1551.51, -496.50}, {19, -1564.19, -503.57},
+        {19, -1577.20, -513.08}, {19, -1591.99, -527.69}, {20, -1602.12, -540.67}, {20, -1605.83, -546.32},
+        {20, -1610.27, -554.45}, {20, -1617.47, -570.29}, {20, -1622.68, -578.14}, {20, -1627.35, -583.35},
+        {20, -1631.97, -587.22}, {20, -1637.76, -591.32}, {20, -1643.00, -594.12}, {20, -1647.39, -595.55},
+        {20, -1655.28, -596.79}, {21, -1685.32, -598.16}, {21, -1710.20, -598.13}, {21, -1724.98, -596.82},
+        {22, -1730.47, -595.14}, {22, -1735.45, -592.28}, {22, -1754.73, -573.22}, {22, -1760.83, -568.89},
+        {22, -1765.16, -567.16}, {22, -1777.38, -564.25}, {22, -1784.40, -563.30}, {23, -1791.01, -563.30},
+        {23, -1797.71, -564.12}, {23, -1806.43, -566.64}, {23, -1812.19, -569.71}, {23, -1815.83, -572.93},
+        {23, -1818.31, -576.24}, {23, -1819.99, -579.66}, {23, -1823.48, -591.81}, {23, -1825.45, -600.69},
+        {23, -1826.10, -606.12}, {23, -1826.18, -612.48}, {24, -1825.27, -620.20}, {24, -1823.20, -626.27},
+        {24, -1817.83, -635.80}, {24, -1813.53, -640.61}, {24, -1808.68, -643.79}, {24, -1800.02, -646.63},
+        {24, -1791.09, -648.66}, {24, -1785.37, -649.39}, {24, -1777.02, -649.64}, {25, -1770.10, -649.08},
+        {25, -1765.38, -647.80}, {25, -1757.93, -644.04}, {25, -1752.90, -640.46}, {25, -1750.43, -638.01},
+        {25, -1743.60, -629.21}, {25, -1741.02, -626.77}, {25, -1736.98, -623.97}, {25, -1732.88, -621.99},
+        {26, -1728.45, -620.69}, {26, -1714.20, -618.99}, {26, -1706.64, -618.79}, {26, -1676.33, -619.63},
+        {26, -1672.44, -619.75}, {26, -1656.50, -620.82}, {26, -1646.65, -622.07}, {26, -1638.85, -623.97},
+        {27, -1632.61, -626.65}, {27, -1628.21, -629.73}, {27, -1622.36, -635.44}, {27, -1619.74, -639.07},
+        {27, -1616.95, -644.15}, {27, -1611.05, -658.73}, {27, -1600.55, -687.13}, {28, -1589.83, -716.15},
+        {28, -1579.41, -744.33}, {28, -1568.99, -772.55}, {28, -1561.21, -793.58}, {28, -1552.19, -815.02},
+        {29, -1538.37, -842.86}, {29, -1536.78, -845.95}, {29, -1526.58, -864.06}, {29, -1515.41, -881.21},
+        {29, -1496.84, -904.93}, {29, -1493.09, -909.76}, {30, -1488.69, -916.39}, {30, -1486.35, -921.48},
+        {30, -1484.70, -927.10}, {30, -1483.49, -935.80}, {30, -1483.00, -942.79}, {30, -1483.21, -948.43},
+        {30, -1486.52, -974.32}, {30, -1487.81, -981.00}, {31, -1490.53, -990.30}, {31, -1493.69, -997.89},
+        {31, -1499.02, -1006.95}, {31, -1506.59, -1015.70}, {31, -1516.41, -1023.42}, {31, -1525.89, -1028.73},
+        {31, -1534.43, -1031.97}, {31, -1547.52, -1035.26}, {31, -1558.23, -1036.36}, {32, -1577.62, -1037.10},
+        {32, -1607.88, -1037.57}, {32, -1619.88, -1037.76}, {32, -1631.44, -1037.40}, {33, -1661.64, -1037.33},
+        {33, -1692.23, -1037.24}, {33, -1722.71, -1037.14}, {33, -1752.96, -1037.05}, {34, -1783.44, -1036.95},
+        {34, -1814.69, -1036.85}, {34, -1845.60, -1036.75}, {35, -1876.22, -1036.65}, {35, -1906.44, -1036.55},
+        {35, -1927.40, -1036.48}, {35, -1935.90, -1036.07}, {35, -1942.24, -1035.22}, {35, -1951.83, -1033.03},
+        {35, -1957.41, -1031.18}, {35, -1961.77, -1029.13}, {36, -1968.64, -1024.56}, {36, -1974.31, -1019.94},
+        {36, -1979.24, -1014.97}, {36, -1984.79, -1008.28}, {36, -1992.62, -996.21}, {36, -1995.60, -990.09},
+        {36, -1997.64, -984.53}, {36, -1999.69, -976.53}, {36, -2000.81, -968.86}, {36, -2001.58, -954.10},
+        {37, -2001.58, -923.15}, {37, -2001.61, -892.36}, {37, -2001.64, -861.97}, {38, -2001.66, -831.91},
+        {38, -2001.68, -801.37}, {38, -2001.70, -771.16}, {38, -2001.73, -740.54}, {39, -2001.76, -709.84},
+        {39, -2001.78, -678.99}, {39, -2001.80, -648.64}, {40, -2001.82, -617.49}, {40, -2001.83, -587.00},
+        {40, -2001.85, -556.53}, {41, -2001.86, -525.53}, {41, -2001.88, -495.34}, {41, -2001.89, -465.27},
+        {41, -2001.90, -434.96}, {42, -2001.92, -404.33}, {42, -2001.94, -374.05}, {42, -2001.94, -343.45},
+        {43, -2001.96, -313.10}, {43, -2001.97, -282.17}, {43, -2001.98, -251.47}, {43, -2001.99, -220.71},
+        {43, -2001.99, -190.00}, {44, -2002.00, -159.39}, {44, -2002.00, -128.63}, {44, -2002.00, -97.89},
+        {44, -2002.00, -67.61}, {45, -2002.00, -36.33}, {45, -2002.00, -5.17}, {45, -2002.00, 25.63},
+        {45, -2001.99, 56.69}, {46, -2001.99, 87.02}, {46, -2001.98, 117.36}, {46, -2001.98, 148.20},
+        {46, -2001.96, 178.59}, {47, -2001.94, 209.21}, {47, -2001.92, 240.12}, {47, -2001.91, 270.52},
+        {47, -2001.90, 300.76}, {47, -2001.88, 331.42}, {48, -2001.88, 362.09}, {48, -2001.88, 364.35},
+        {48, -2001.51, 369.24}, {48, -2000.44, 373.44}, {48, -1998.48, 377.14}, {48, -1995.28, 380.45},
+        {48, -1991.24, 382.56}, {48, -1986.81, 383.28}, {48, -1974.68, 380.84}, {48, -1963.48, 379.71},
+        {49, -1953.49, 378.99}, {49, -1930.70, 378.34}, {49, -1900.51, 378.07}, {49, -1869.49, 377.76},
+        {50, -1839.38, 377.45}, {50, -1812.86, 377.18}, {50, -1782.47, 377.44}, {50, -1751.58, 377.45},
+        {50, -1721.36, 377.44}, {51, -1691.29, 377.44}, {51, -1660.62, 377.44}, {51, -1639.14, 377.42},
+        {51, -1610.25, 376.04}, {52, -1579.87, 373.69}, {52, -1568.22, 372.78}, {52, -1538.17, 368.89},
+        {52, -1531.68, 368.02}, {52, -1508.80, 363.88}, {52, -1485.64, 358.47}, {53, -1468.46, 353.28},
+        {53, -1440.57, 343.13}, {53, -1412.62, 330.34}, {53, -1404.23, 326.50}, {53, -1393.83, 321.27},
+        {53, -1368.43, 304.98}, {53, -1364.85, 302.61}, {54, -1340.99, 284.82}, {54, -1334.52, 280.86},
+        {54, -1329.66, 279.23}, {54, -1319.84, 277.37}, {54, -1312.21, 277.08}, {54, -1304.75, 277.57},
+        {54, -1294.16, 279.36}, {54, -1284.71, 282.54}, {55, -1257.43, 297.88}, {55, -1250.56, 301.79},
+        {55, -1223.41, 315.86}, {55, -1195.76, 330.20}, {55, -1186.97, 334.77}, {55, -1180.15, 337.92},
+        {55, -1164.54, 344.42}, {55, -1136.30, 354.55}, {55, -1118.78, 360.83}, {56, -1100.62, 366.16},
+        {56, -1072.71, 372.96}, {56, -1058.13, 376.18}, {56, -1037.94, 379.84}, {56, -1027.74, 381.37},
+        {56, -996.94, 384.70}, {56, -967.33, 387.94}, {56, -952.15, 388.95}, {57, -927.49, 389.65},
+        {57, -896.77, 389.82}, {57, -865.77, 390.01}, {57, -858.27, 390.06}, {57, -827.38, 389.77},
+        {58, -796.80, 389.49}, {58, -766.56, 389.21}, {58, -736.47, 388.93}, {58, -705.70, 388.64},
+        {58, -680.37, 388.41}, {59, -649.78, 388.75}, {59, -619.20, 389.09}, {59, -588.85, 389.41},
+        {59, -558.33, 389.74}, {59, -527.41, 390.08}, {60, -497.51, 390.40}, {60, -475.28, 389.90},
+        {60, -445.19, 389.74}, {60, -414.50, 389.56}, {60, -383.60, 389.37}, {61, -353.53, 389.19},
+        {61, -322.63, 389.00}, {61, -291.79, 388.81}, {61, -261.03, 388.61}, {62, -230.90, 388.42},
+        {62, -211.73, 388.30}, {62, -181.63, 388.80}, {62, -177.06, 388.88}, {62, -146.87, 388.70},
+        {63, -116.42, 388.82}, {63, -105.56, 388.86}, {63, -95.55, 389.37}, {63, -65.44, 392.73},
+        {63, -50.47, 394.38}, {63, -38.61, 395.25}, {63, -8.72, 398.66}, {63, 3.10, 400.11},
+        {63, 9.08, 401.99}, {64, 13.94, 405.15}, {64, 16.77, 409.15}, {64, 17.92, 413.55},
+        {64, 17.17, 431.76}, {64, 16.27, 440.56}, {64, 15.80, 456.11}, {64, 15.51, 486.70},
+        {64, 15.35, 503.10}, {64, 15.96, 533.39}, {64, 16.31, 551.04},
+    },
 }
-
+Path.RECORDED = {
+    [4] = {count = 64, first = {-6.93, 418.42}, last = {16.28, 401.44}},
+}
+Path.RECORDED_MATCH = 5
 local function buildPlan(route)
     plan.route, plan.items, plan.serverCount = route, {}, 0
+    plan.full, plan.mismatch, plan.city = nil, nil, nil
     local points = routePoints()
     if not points or #points == 0 then return end
     local server = {}
@@ -1392,6 +1719,19 @@ local function buildPlan(route)
     local n = #server
     plan.serverCount = n
     plan.server = server
+    local rec = Path.RECORDED[route]
+    if rec then
+        local function off(p, q) return math.sqrt((p.x - q[1]) ^ 2 + (p.y - q[2]) ^ 2) end
+        if rec.count == n and off(server[1], rec.first) <= Path.RECORDED_MATCH
+            and off(server[n], rec.last) <= Path.RECORDED_MATCH and Path.LINE[route] then
+            plan.full = true
+        else
+            plan.mismatch = true
+            note(string.format("Маршрут %d не совпал с записанным проездом — еду по точкам сервера",
+                route))
+        end
+    end
+    plan.city = City.of(server[1])
     local marks = {}
     for index, point in ipairs(WAYPOINTS) do
         if not point[5] or point[5] == route then
@@ -1458,7 +1798,7 @@ local function buildPlan(route)
             plan.items[#plan.items + 1] = {kind = "server", index = slot,
                 x = server[slot].x, y = server[slot].y}
         end
-        local guides = GUIDES[route]
+        local guides = not plan.mismatch and GUIDES[route] or nil
         if guides and slot >= 1 and slot < n and not bySlot[slot] then
             for _, g in ipairs(guides) do
                 if g[1] == slot then
@@ -1472,21 +1812,33 @@ local function buildPlan(route)
                 x = p[1], y = p[2], h = p[3], r = p[4] or K.WAYPOINT_MID}
         end
     end
+    local city = plan.city
+    local g, f = city and city.gate, city and city.finish
+    if g then
+        table.insert(plan.items, 1, {kind = "mark", city = "gate", slot = 0, x = g[1], y = g[2],
+            h = g[3], r = g[4], label = city.name .. ": выезд"})
+        plan.items[#plan.items + 1] = {kind = "mark", city = "gate", slot = n, x = g[1], y = g[2],
+            h = (g[3] + 180) % 360, r = g[4], label = city.name .. ": въезд"}
+    end
+    if f then
+        plan.items[#plan.items + 1] = {kind = "mark", city = "finish", slot = n, x = f[1], y = f[2],
+            h = f[3], r = f[4], label = city.name .. ": финиш"}
+    end
     local last = plan.items[#plan.items]
     if last and last.kind == "mark" then last.final = true end
     local markCount = 0
     for _, item in ipairs(plan.items) do
-        if item.kind == "mark" then markCount = markCount + 1 end
+        if item.kind == "mark" and not item.city then markCount = markCount + 1 end
     end
     local guideCount = 0
     for _, item in ipairs(plan.items) do
         if item.kind == "guide" then guideCount = guideCount + 1 end
     end
     emit("plan_built", {route = route, server = n, marks = markCount, guides = guideCount,
-        dropped = #marks - markCount}, true)
+        dropped = #marks - markCount, city = city and city.name or NULL,
+        recorded = plan.full == true, mismatch = plan.mismatch == true}, true)
     Path.rebuild()
 end
-
 local function routeSpot(route, x, y, h)
     local server = plan.server
     local n = #server
@@ -1510,7 +1862,6 @@ local function routeSpot(route, x, y, h)
     end
     return bestSlot, bestAlong
 end
-
 placeInOrder = function(point)
     local route = point[5]
     if not route or plan.route ~= route or not plan.server or #plan.server < 2 then
@@ -1527,23 +1878,20 @@ placeInOrder = function(point)
     end
     return last > 0 and last + 1 or #WAYPOINTS + 1
 end
-
 local function planPending(item, current)
     if item.kind == "server" then return item.index >= current end
     if item.done then return false end
     return item.slot + 1 >= current
 end
-
 local function planLabel(item)
     if item.kind ~= "mark" then return nil end
+    if item.city then return item.label .. (item.final and " ФИНИШ" or "") end
     return string.format("метка #%d/%d (r%g)%s", item.mark, #WAYPOINTS, item.r,
         item.final and " ФИНИШ" or "")
 end
-
 local function railLookahead(speed, most)
     return clamp(toMs(speed or 0) * 1.5, 8, most or 14)
 end
-
 local function railAim(position, speed, a, b, c, most)
     local abx, aby = b.x - a.x, b.y - a.y
     local ab = math.sqrt(abx * abx + aby * aby)
@@ -1565,22 +1913,25 @@ local function railAim(position, speed, a, b, c, most)
     end
     return {x = b.x, y = b.y, z = position.z}, legAB
 end
-
 local function isRail(item)
     return item ~= nil and item.kind == "mark" and not item.final
         and (item.slot == 0 or item.slot == plan.serverCount)
 end
-
 local LANE_OFFSETS = {
     [1] = {
         0.8, 1.9, 1.6, 1.5, 1.9, 1.0, 1.1, 1.7, 1.7, 2.4, 1.8, 1.7, 1.3, 1.2, 0.5, 0.9,
         0.7, 0.7, 1.5, 1.7, 1.7, 2.1, 0.2, -1.6, -0.8, -0.3, 1.1, 2.1, 1.0, 1.9, 0.6, 1.7,
         0.7, 1.4, 2.0, 1.6, 1.6, 1.5, 1.5, 1.6, 2.3, 2.2, 1.7, 2.1, 2.0, 1.1, 1.4, 1.8,
         0.7, 1.5, 1.1, 0.9, 1.1, 0.1},
+    [4] = {
+        1.3, 0.9, 1.1, 1.9, 0.8, -0.2, 0.9, 1.8, 0.6, 0.8, 0.0, 0.1, 1.7, 0.9, -1.4, 1.3,
+        1.2, 1.2, 0.4, 0.8, 0.1, 2.6, -1.7, -2.9, -2.3, 1.8, 0.9, -0.9, 0.1, 0.5, 0.6, 0.3,
+        0.9, 1.3, 1.0, 1.2, 1.4, 1.1, 0.8, 1.2, 1.2, 1.4, 0.8, 1.4, 1.0, 1.0, 0.9, 1.2,
+        0.4, 1.9, 2.3, 1.2, 1.8, -0.4, -0.6, 0.8, 1.5, 1.6, 2.4, 0.7, 1.9, 2.1, 1.4, -3.3,
+    },
 }
-
 local function laneShifted(index, point, z)
-    local offsets = LANE_OFFSETS[plan.route]
+    local offsets = not plan.mismatch and LANE_OFFSETS[plan.route] or nil
     local offset = offsets and offsets[index]
     local server = plan.server
     if not finite(offset) or offset == 0 or not server or not server[index] then
@@ -1594,7 +1945,6 @@ local function laneShifted(index, point, z)
     dx, dy = dx / length, dy / length
     return {x = point.x + dy * offset, y = point.y - dx * offset, z = z}
 end
-
 local function planStep(position, heading, current, live, speed)
     local items = plan.items
     if #items == 0 or not position or not finite(heading) then return nil end
@@ -1671,7 +2021,9 @@ local function planStep(position, heading, current, live, speed)
     local function ghostAim(i, target)
         local prev = items[i - 1]
         if not prev or prev.kind ~= "server" or isRail(items[i]) then return nil end
-        if items[i].kind ~= "mark" and not LANE_OFFSETS[plan.route] then return nil end
+        if items[i].kind ~= "mark" and (plan.mismatch or not LANE_OFFSETS[plan.route]) then
+            return nil
+        end
         local pass = laneShifted(prev.index, prev, position.z)
         local rad = math.rad(heading)
         local ahead = (pass.x - position.x) * -math.sin(rad) + (pass.y - position.y) * math.cos(rad)
@@ -1688,7 +2040,7 @@ local function planStep(position, heading, current, live, speed)
         local item = items[i]
         local target, aim, rail
         if (isRail(item) and isRail(items[i - 1]))
-            or (item.kind == "mark" and item.final and items[i - 1]) then
+            or (item.kind == "mark" and item.final and items[i - 1] and not plan.full) then
             target = {x = item.x, y = item.y, z = position.z}
             aim, rail = railAim(position, speed, items[i - 1], item,
                 isRail(items[i + 1]) and items[i + 1] or nil)
@@ -1724,7 +2076,7 @@ local function planStep(position, heading, current, live, speed)
             if item.kind == "mark" then
                 local err = math.abs(angle(bearingTo(item.x - position.x,
                     item.y - position.y) - heading))
-                local fresh = state.waypointSkip == item.mark
+                local fresh = item.mark ~= nil and state.waypointSkip == item.mark
                 if fresh and d > item.r + BODY_HALF_WIDTH then
                     state.waypointSkip, fresh = nil, false
                 end
@@ -1764,11 +2116,9 @@ local function planStep(position, heading, current, live, speed)
     end
     return nil
 end
-
 K.TRAFFIC_SEE = 60
 K.TRAFFIC_CONE = 70
 K.TRAFFIC_SAME = 12
-
 K.TRAFFIC_HEADING = 60
 local TRAFFIC = {
     {2165.20, 2443.91, 0, 51.0},
@@ -1780,13 +2130,11 @@ local TRAFFIC = {
     {426.00, 2792.02, 3, 270.4},
     {1280.30, 2792.24, 3, 269.9},
 }
-
 local function trafficState()
     local value = read("getTrafficLightState")
     value = tonumber(value)
     return finite(value) and value or nil
 end
-
 local function trafficNear(position, radius, heading)
     if not position then return nil end
     local best, bestDistance
@@ -1803,14 +2151,12 @@ local function trafficNear(position, radius, heading)
     end
     return best, bestDistance
 end
-
 local function trafficWorking()
     if state.ignoreTraffic then return false end
     local value = trafficState()
     if value == 9 then return false end
     return true
 end
-
 local function trafficAhead(position, heading)
     if not position or not finite(heading) then return nil end
     if not trafficWorking() then return nil end
@@ -1833,7 +2179,6 @@ local function trafficAhead(position, heading)
     return {distance = bestDistance, green = state ~= nil and state == best[3],
         state = state, green_state = best[3]}
 end
-
 local function trafficWaypoint(position, heading, targetDistance)
     if not position or not finite(heading) then return nil end
     local best, bestDistance
@@ -1853,7 +2198,6 @@ local function trafficWaypoint(position, heading, targetDistance)
     if not best then return nil end
     return {x = best[1], y = best[2], z = position.z}, bestDistance
 end
-
 local function trafficDump()
     local parts = {}
     for _, light in ipairs(TRAFFIC) do
@@ -1864,7 +2208,6 @@ local function trafficDump()
     emit("traffic_table", {count = #TRAFFIC, lua = text}, true)
     return text
 end
-
 local function trafficSave(position, heading)
     if not position then
         note("Светофор: не вижу машину")
@@ -1890,7 +2233,6 @@ local function trafficSave(position, heading)
         green = state, total = #TRAFFIC}, true)
     trafficDump()
 end
-
 local function trafficForget(position, heading)
     local index = trafficNear(position, K.TRAFFIC_SEE, heading)
     if not index then
@@ -1901,7 +2243,6 @@ local function trafficForget(position, heading)
     note("Светофор забыт, осталось " .. #TRAFFIC)
     trafficDump()
 end
-
 local NOSE = 4.2
 local RAY_EDGE = 1.25
 local RAY_STEP = 0.625
@@ -1911,10 +2252,8 @@ local function rayOffsets()
     for k = 0, 3 do list[#list + 1] = -RAY_EDGE + (k + rayPhase / 3) * RAY_STEP end
     return list
 end
-
 local ARC_STRAIGHT = 1 / 250
 local ARC_SEGMENTS = 3
-
 local function arcPose(position, heading, curvature, s)
     local rad = math.rad(heading)
     local fx, fy = -math.sin(rad), math.cos(rad)
@@ -1926,7 +2265,6 @@ local function arcPose(position, heading, curvature, s)
     return position.x + fx * along - fy * aside, position.y + fy * along + fx * aside,
         heading + math.deg(turn)
 end
-
 local function arcLocal(position, heading, curvature, x, y)
     local rad = math.rad(heading)
     local fx, fy = -math.sin(rad), math.cos(rad)
@@ -1942,21 +2280,18 @@ local function arcLocal(position, heading, curvature, x, y)
     local rho = math.sqrt(wx * wx + wy * wy)
     return phi * radius, sign > 0 and (rho - radius) or (radius - rho)
 end
-
 local function noseOf(position, heading)
     local rad = math.rad(heading)
     return {x = position.x - math.sin(rad) * NOSE, y = position.y + math.cos(rad) * NOSE,
         z = position.z}
 end
-
 Path.STEP, Path.MAXM, Path.SHARP, Path.SHARPM, Path.DEDUPE, Path.PHASE = 1.0, 30, 45, 18, 5, 0.5
 Path.TAPER, Path.NEAR = 35, 4
 Path.LEAD, Path.LEAD_MIN, Path.LEAD_MAX = 1.0, 6, 18
 Path.TOL, Path.TOL_MARK = 1.0, 0.6
 Path.OFF = 8
-Path.CUT = 5
+Path.CUT, Path.MINR = 1.5, 9
 Path.n = 0
-
 do
     local function unit(x, y)
         local l = math.sqrt(x * x + y * y)
@@ -1967,7 +2302,6 @@ do
         local r = math.rad(deg)
         return x * math.cos(r) - y * math.sin(r), x * math.sin(r) + y * math.cos(r)
     end
-
     local function bend(line, marks)
         local n = #line
         local s, nx, ny = {}, {}, {}
@@ -2023,7 +2357,6 @@ do
         end
         return out
     end
-
     local function merge(points, marks)
         local list = {}
         for _, p in ipairs(points) do list[#list + 1] = p end
@@ -2044,7 +2377,6 @@ do
         end)
         return list
     end
-
     local function prepare(ctrl)
         local P = {}
         for _, c in ipairs(ctrl) do
@@ -2099,7 +2431,6 @@ do
         end
         return P, tx, ty, turn
     end
-
     local function sample(P, tx, ty, turn, step, put)
         local m = #P
         local S, nextAt, px, py = 0, 0, nil, nil
@@ -2131,7 +2462,6 @@ do
         ctrlS[m] = S
         return ctrlS
     end
-
     local function smoothLine(line)
         local ctrl = {}
         for _, g in ipairs(line) do ctrl[#ctrl + 1] = {kind = "line", slot = g[1], x = g[2], y = g[3]} end
@@ -2143,7 +2473,6 @@ do
         out[#out + 1] = {last.slot, last.x, last.y}
         return out
     end
-
     local function build(ctrl)
         local P, tx, ty, turn = prepare(ctrl)
         local m = #P
@@ -2189,30 +2518,39 @@ do
             end
         end
     end
-
     function Path.rebuild()
         Path.n, Path.cursor, Path.frame, Path.searchAt = 0, nil, nil, nil
         local items, count = plan.items, plan.serverCount
         if #items < 2 then return end
-        local line = Path.LINE[plan.route]
+        local line = not plan.mismatch and Path.LINE[plan.route] or nil
         local ctrl = {}
         if line then
             local marks, inner, core = {}, {}, {}
+            for _, g in ipairs(line) do
+                if plan.full or (g[1] >= 1 and g[1] < count) then core[#core + 1] = g end
+            end
+            local function crossed(item)
+                for i = 1, #core - 1 do
+                    local a, b = core[i], core[i + 1]
+                    if math.abs(a[1] - item.slot) <= 1
+                        and segmentDistance(item.x, item.y, a[2], a[3], b[2], b[3]) <= item.r - 1 then
+                        return true
+                    end
+                end
+                return false
+            end
             for order, item in ipairs(items) do
-                if item.kind == "mark" then
+                if item.kind == "mark" and not (plan.full and item.city == "gate" and crossed(item)) then
                     local mk = {x = item.x, y = item.y, h = item.h, slot = item.slot, order = order}
                     marks[#marks + 1] = mk
                     if item.slot >= 1 and item.slot < count then inner[#inner + 1] = mk end
                 end
             end
-            for _, g in ipairs(line) do
-                if g[1] >= 1 and g[1] < count then core[#core + 1] = g end
-            end
             ctrl = merge(bend(smoothLine(core), inner), marks)
             local railed = {}
             for i, c in ipairs(ctrl) do
                 local prev = ctrl[i - 1]
-                if prev and c.kind == "mark" and prev.kind == "mark"
+                if not plan.full and prev and c.kind == "mark" and prev.kind == "mark"
                     and (c.slot == 0 or c.slot >= count) and (prev.slot == 0 or prev.slot >= count) then
                     local d = math.sqrt((c.x - prev.x) ^ 2 + (c.y - prev.y) ^ 2)
                     for q = 1, math.floor(d / 2) - 1 do
@@ -2226,8 +2564,15 @@ do
             ctrl = railed
         else
             local raw = {}
+            local city = plan.city
             for _, item in ipairs(items) do
-                if item.kind == "server" then
+                local cityLine = item.city == "gate" and city
+                    and (item.slot == 0 and city.exit or item.slot >= count and city.entry) or nil
+                if cityLine then
+                    for _, g in ipairs(cityLine) do
+                        raw[#raw + 1] = {kind = "line", x = g[1], y = g[2], slot = item.slot}
+                    end
+                elseif item.kind == "server" then
                     local p = laneShifted(item.index, item, 0)
                     raw[#raw + 1] = {kind = "server", x = p.x, y = p.y, slot = item.index}
                 else
@@ -2243,12 +2588,17 @@ do
                     local th = math.rad(math.abs(angle(bearingTo(ox, oy) - bearingTo(ix, iy))))
                     if th > math.rad(4) and th < math.rad(150) and lin > 2 and lout > 2 then
                         local half = th / 2
-                        local R = math.min(Path.CUT / (1 / math.cos(half) - 1), 200)
+                        local sag = 1 / math.cos(half) - 1
+                        local R = math.min(math.max(Path.CUT / sag, Path.MINR), 200)
                         local T = math.min(R * math.tan(half), 0.45 * math.min(lin, lout))
-                        local mag = 4 * (T / math.tan(half)) * math.tan(th / 4)
-                        ctrl[#ctrl + 1] = {kind = "fillet", x = c.x - ix * T, y = c.y - iy * T,
+                        R = T / math.tan(half)
+                        local push = math.max(0, R * sag - Path.CUT)
+                        local bx, by = unit(ix - ox, iy - oy)
+                        local sx, sy = bx * push, by * push
+                        local mag = 4 * R * math.tan(th / 4)
+                        ctrl[#ctrl + 1] = {kind = "fillet", x = c.x - ix * T + sx, y = c.y - iy * T + sy,
                             slot = c.slot - 1, dir = {ix, iy}, arc = i, mag = mag}
-                        ctrl[#ctrl + 1] = {kind = "fillet", x = c.x + ox * T, y = c.y + oy * T,
+                        ctrl[#ctrl + 1] = {kind = "fillet", x = c.x + ox * T + sx, y = c.y + oy * T + sy,
                             slot = c.slot, dir = {ox, oy}, arc = i, mag = mag}
                         filleted = true
                     end
@@ -2260,7 +2610,6 @@ do
         emit("path_built", {route = plan.route, points = Path.n, control = #(Path.ctrl or {}),
             length = Path.n > 0 and math.floor(Path.s[Path.n]) or 0, line = line ~= nil}, true)
     end
-
     function Path.at(s, from)
         local i = clamp(from or 1, 1, math.max(1, Path.n - 1))
         while i < Path.n - 1 and Path.s[i + 1] < s do i = i + 1 end
@@ -2270,7 +2619,6 @@ do
         local t = span > 0 and clamp((s - Path.s[i]) / span, 0, 1) or 0
         return Path.x[i] + (Path.x[b] - Path.x[i]) * t, Path.y[i] + (Path.y[b] - Path.y[i]) * t, i
     end
-
     function Path.locate(position, heading, slotHint)
         if Path.n < 2 then return nil end
         local rad = math.rad(heading or 0)
@@ -2309,7 +2657,6 @@ do
         local lateral = ((position.x - ax) * dy - (position.y - ay) * dx) / L
         return Path.s[i] + t * L, lateral, bearingTo(dx, dy), i
     end
-
     function Path.aim(s, speed)
         local L = clamp(toMs(speed or 0) * Path.LEAD, Path.LEAD_MIN, Path.LEAD_MAX)
         local x0, y0, i0 = Path.at(s, Path.cursor)
@@ -2332,7 +2679,19 @@ do
             length = math.max(Path.LEAD_MIN, length - 1)
         end
     end
-
+    Path.REAR = 2.4
+    function Path.steerAim(frame, position, heading, speed)
+        local rad = math.rad(heading)
+        local rx, ry = position.x + math.sin(rad) * Path.REAR, position.y - math.cos(rad) * Path.REAR
+        local ax, ay, lead = Path.aim(frame.s - Path.REAR, speed)
+        local dx, dy = ax - rx, ay - ry
+        local d = math.sqrt(dx * dx + dy * dy)
+        if d < 1 then return ax, ay, lead end
+        local k = 2 * math.sin(math.rad(angle(bearingTo(dx, dy) - heading))) / d
+        local D = math.min(d, 15, 1.5 / math.max(math.abs(k), 1e-6))
+        local a = math.asin(clamp(k * D / 2, -1, 1))
+        return position.x - math.sin(rad + a) * D, position.y + math.cos(rad + a) * D, lead
+    end
     function Path.speedAhead(s, speed)
         local reach = brakeDistance(speed or 0, 0) * 1.3 + 20
         local goal
@@ -2349,7 +2708,6 @@ do
         end
         return goal
     end
-
     function Path.update(position, heading, slotHint, speed, shift)
         Path.frame = nil
         local s, lateral, pathHeading, i = Path.locate(position, heading, slotHint)
@@ -2394,7 +2752,6 @@ do
         frame.reach = reach
         return frame
     end
-
     function Path.localOf(x, y)
         local f = Path.frame
         if not f or not f.onPath then return nil end
@@ -2413,7 +2770,6 @@ do
         local side = ((x - ax) * dy - (y - ay) * dx) / L
         return ahead, side - f.expect(math.max(0, ahead) + NOSE)
     end
-
     function Path.place(nose, heading, curvature, x, y)
         local f = Path.frame
         if f and f.onPath then
@@ -2423,7 +2779,6 @@ do
         end
         return arcLocal(nose, heading, curvature, x, y)
     end
-
     function Path.judge(x, y, h)
         if Path.n < 2 or not Path.frame then return true, 0 end
         local f = Path.frame
@@ -2442,7 +2797,6 @@ do
         return ok, math.abs(side) * 3 + turn / 3
     end
 end
-
 local function forwardGap(vehicle, position, heading, speed, shift, curvature, spine)
     local reach = clamp(brakeDistance(speed, 0) + 22, 18, 85)
     curvature = finite(curvature) and curvature or 0
@@ -2504,7 +2858,6 @@ local function forwardGap(vehicle, position, heading, speed, shift, curvature, s
     bestVehicle = kind == "vehicle"
     return best, bestVehicle, bestX, bestY, bestZ, bestLane, kind, bestElement, central
 end
-
 local function nearVehicleGap(vehicle, position, heading)
     local rad = math.rad(heading)
     local fx, fy = -math.sin(rad), math.cos(rad)
@@ -2525,7 +2878,6 @@ local function nearVehicleGap(vehicle, position, heading)
     local kind = (elementType == "ped" or elementType == "player") and "ped" or "vehicle"
     return best, bestLane, kind, bestElement
 end
-
 K.OBSTACLE_SAME = 1.5
 K.OBSTACLE_HEIGHT = 0.5
 local CORRIDOR = 1.7
@@ -2535,7 +2887,6 @@ local KNOWN_OBSTACLES = {
     {2195.14, 2429.47},
 }
 for _, o in ipairs(KNOWN_OBSTACLES) do OBSTACLES[#OBSTACLES + 1] = {o[1], o[2], 0} end
-
 local function rememberObstacle(x, y, z, now)
     local ground = read("getGroundPosition", x, y, z + 1.5)
     if finite(ground) and z - ground < K.OBSTACLE_HEIGHT then return false end
@@ -2549,7 +2900,6 @@ local function rememberObstacle(x, y, z, now)
     OBSTACLES[#OBSTACLES + 1] = {x, y, now}
     return true
 end
-
 local function rememberedGap(position, heading, reach, curvature, skip)
     local best, bestSide, bestX, bestY
     local nose = noseOf(position, heading)
@@ -2567,7 +2917,6 @@ local function rememberedGap(position, heading, reach, curvature, skip)
     end
     return best, bestSide, bestX, bestY
 end
-
 local SQUEEZE_MAX = 1.5
 local SQUEEZE_CLEAR = 1.75
 K.SQUEEZE_REACH = 20
@@ -2589,11 +2938,23 @@ local function squeezeShift(position, heading, curvature, most, skip)
             else lo = math.max(lo, side + SQUEEZE_CLEAR) end
         end
     end
+    for _, b in ipairs(Bumps.list) do
+        local ahead, side = -9, 99
+        if (b[1] - nose.x) ^ 2 + (b[2] - nose.y) ^ 2 < far then
+            ahead, side = Path.place(nose, heading, curvature, b[1], b[2])
+        end
+        local clear = SQUEEZE_CLEAR + Bumps.margin(b)
+        if ahead > -1 and ahead < K.SQUEEZE_REACH and math.abs(side) < clear + most
+            and not (skip and skip(b[1], b[2])) then
+            seen = true
+            if side >= 0 then hi = math.min(hi, side - clear)
+            else lo = math.max(lo, side + clear) end
+        end
+    end
     if not seen then return 0 end
     if lo > hi then return clamp((lo + hi) / 2, -most, most) end
     return clamp(0, lo, hi)
 end
-
 K.RAIL_SHIFT_RAMP = 8
 local function railShift(leg, position)
     local lx, ly = leg[3] - leg[1], leg[4] - leg[2]
@@ -2617,18 +2978,15 @@ local function railShift(leg, position)
     if not (left or right) then return 0 end
     return clamp(0, lo, hi)
 end
-
 local function lowHit(x, y, z)
     local ground = read("getGroundPosition", x, y, z + 1.5)
     return finite(ground) and z - ground < K.OBSTACLE_HEIGHT
 end
-
 local Smart = {STEERS = {-1, -0.5, 0, 0.5, 1}}
 function Smart.round(v, places)
     local m = 10 ^ (places or 2)
     return math.floor(v * m + 0.5) / m
 end
-
 function Smart.vehicleKind(element, now)
     local vx, vy = read("getElementVelocity", element)
     local moving = finite(vx) and finite(vy) and math.sqrt(vx * vx + vy * vy) * 50 > 1.0
@@ -2647,17 +3005,14 @@ function Smart.vehicleKind(element, now)
     if still >= (trafficWorking() and 35000 or 15000) then return "stalled" end
     return "queue"
 end
-
 function Smart.curvature(sigma)
     return (sigma >= 0 and 1 or -1) * sigma * sigma / minRadius(2)
 end
-
 function Smart.rearOf(position, heading)
     local rad = math.rad(heading)
     return {x = position.x + math.sin(rad) * NOSE, y = position.y - math.cos(rad) * NOSE,
         z = position.z}
 end
-
 function Smart.arcFree(vehicle, start, heading, curvature, length, backward)
     local sz = start.z - 0.3
     local free = length
@@ -2681,7 +3036,6 @@ function Smart.arcFree(vehicle, start, heading, curvature, length, backward)
     end
     return free
 end
-
 Smart.FRONT = {{4.4, -1.5}, {4.4, -0.75}, {4.4, 0}, {4.4, 0.75}, {4.4, 1.5}, {-4.2, -1.5}, {-4.2, 1.5}}
 Smart.BACK = {{-4.4, -1.5}, {-4.4, -0.75}, {-4.4, 0}, {-4.4, 0.75}, {-4.4, 1.5}, {4.2, -1.5}, {4.2, 1.5}}
 function Smart.remembered(x, y, h)
@@ -2722,7 +3076,6 @@ function Smart.sweepFree(vehicle, position, heading, k, length, backward)
     end
     return length
 end
-
 function Smart.scan(err)
     local vehicle, position, heading = Smart.vehicle, Smart.position, Smart.heading
     if not position or not finite(heading) then return nil end
@@ -2796,7 +3149,6 @@ function Smart.scan(err)
         x = Smart.round(position.x), y = Smart.round(position.y), heading = Smart.round(heading, 1)}, true)
     return best
 end
-
 local HALF_WIDTH = 1.25
 local function sideGap(vehicle, position, heading, side)
     local rad = math.rad(heading)
@@ -2820,9 +3172,7 @@ local function sideGap(vehicle, position, heading, side)
     end
     return best
 end
-
 local analogNames = {"accelerate", "brake_reverse", "vehicle_left", "vehicle_right"}
-
 local function releaseControls()
     local failed = {}
     for _, name in ipairs(analogNames) do
@@ -2834,7 +3184,6 @@ local function releaseControls()
     state.owned = false
     return failed
 end
-
 local function applyControls(out)
     local values = {out.throttle, out.brake,
         math.max(0, out.steer), math.max(0, -out.steer)}
@@ -2850,22 +3199,18 @@ local function applyControls(out)
     state.owned = true
     return true
 end
-
 local SPRAY_KEY = "1"
-
 local function pressSprayKey(now)
     if type(native.key) ~= "function" then return false end
     if read("dfEmulateKey", SPRAY_KEY, true) ~= true then return false end
     state.sprayKeyDown = now
     return true
 end
-
 local function updateSprayKey(now)
     if state.sprayKeyDown and elapsed(now, state.sprayKeyDown) >= 60 then
         if read("dfEmulateKey", SPRAY_KEY, false) == true then state.sprayKeyDown = nil end
     end
 end
-
 local function applySpray(vehicle, want, now)
     if not vehicle or want == nil then return end
     local current = sprayOn(vehicle)
@@ -2876,7 +3221,6 @@ local function applySpray(vehicle, want, now)
         emit("spray_request", {want = want, observed = current}, true)
     end
 end
-
 locationOfRoute = function(id)
     if type(_G.tCities) ~= "table" or not id then return nil end
     for location, routes in pairs(_G.tCities) do
@@ -2888,7 +3232,6 @@ locationOfRoute = function(id)
     end
     return nil
 end
-
 homePoint = function(location, position)
     if type(_G.tCitySpawnPos) ~= "table" then return nil end
     local lists = {}
@@ -2915,7 +3258,6 @@ homePoint = function(location, position)
     end
     return best, bestDistance
 end
-
 local function buildSuffix()
     state.suffix = nil
     local points = routePoints()
@@ -2928,13 +3270,118 @@ local function buildSuffix()
     end
     state.suffix = suffix
 end
-
+local Signals = {side = nil, hazard = false, queue = {}, down = {}, ours = {}, watchLeft = 4}
+Signals.KEYS = {left = "[", right = "]", hazard = "o"}
+Signals.ON, Signals.OFF = 30, 12
+Signals.NEAR, Signals.FAR = 25, 45
+Signals.LONGEST = 25000
+function Signals.keys(now)
+    for key, at in pairs(Signals.down) do
+        if now >= at then
+            read("dfEmulateKey", key, false)
+            Signals.down[key] = nil
+        end
+    end
+    if #Signals.queue == 0 or next(Signals.down) or elapsed(now, Signals.lastTap) < 250 then return end
+    local key = table.remove(Signals.queue, 1)
+    local ok = read("dfEmulateKey", key, true) == true
+    Signals.lastTap, Signals.ours[key] = now, now
+    if ok then Signals.down[key] = now + 80 end
+    if Signals.watchLeft > 0 then
+        Signals.watchLeft = Signals.watchLeft - 1
+        Signals.watchUntil = now + 3000
+    end
+    emit("signal_key", {key = key, ok = ok}, true)
+end
+function Signals.tap(key, now)
+    Signals.queue[#Signals.queue + 1] = key
+    Signals.keys(now)
+end
+function Signals.set(side, now, why)
+    if Signals.manual or Signals.side == side then return end
+    if Signals.side then Signals.tap(Signals.KEYS[Signals.side], now) end
+    if side then Signals.tap(Signals.KEYS[side], now) end
+    Signals.side, Signals.since, Signals.calm = side, now, nil
+    emit("signal", {side = side or "off", why = why or NULL}, true)
+end
+function Signals.setHazard(on, now)
+    if Signals.manual or Signals.hazard == on then return end
+    Signals.tap(Signals.KEYS.hazard, now)
+    Signals.hazard = on
+    emit("signal", {hazard = on}, true)
+end
+function Signals.turnAhead(frame, from, to)
+    if not frame or Path.n < 2 then return 0 end
+    local best = 0
+    for d = from, to, 5 do
+        local x1, y1, i = Path.at(frame.s + d, frame.i)
+        local x2, y2 = Path.at(frame.s + d + 3, i)
+        if (x2 - x1) ^ 2 + (y2 - y1) ^ 2 > 0.25 then
+            local turn = angle(bearingTo(x2 - x1, y2 - y1) - frame.heading)
+            if math.abs(turn) > math.abs(best) then best = turn end
+        end
+    end
+    return best
+end
+function Signals.update(now, context, heading)
+    Signals.keys(now)
+    if Signals.manual then return end
+    if not state.bot or not state.signals then
+        if Signals.side then Signals.set(nil, now, state.bot and "выключены в панели" or "бот не ведёт") end
+        return
+    end
+    local frame = Path.frame
+    if not frame or not frame.near then
+        if Signals.side and elapsed(now, Signals.since) >= Signals.LONGEST then
+            Signals.set(nil, now, "дольше 25 с")
+        end
+        return
+    end
+    local far = clamp(toMs(context.speed or 0) * 4, Signals.NEAR, Signals.FAR)
+    local turn = Signals.turnAhead(frame, 0, far)
+    local side = turn > 0 and "left" or "right"
+    if not Signals.side then
+        if math.abs(turn) >= Signals.ON then
+            Signals.set(side, now, string.format("поворот %.0f°", turn))
+        end
+        return
+    end
+    if side ~= Signals.side and math.abs(turn) >= Signals.ON then
+        Signals.set(side, now, "сразу поворот в другую сторону")
+        return
+    end
+    local settled = math.abs(turn) < Signals.OFF and finite(heading)
+        and math.abs(angle(frame.heading - heading)) < Signals.OFF
+    if settled then
+        Signals.calm = Signals.calm or now
+        if elapsed(now, Signals.calm) >= 700 then Signals.set(nil, now, "поворот пройден") end
+    else
+        Signals.calm = nil
+    end
+    if Signals.side and elapsed(now, Signals.since) >= Signals.LONGEST then
+        Signals.set(nil, now, "дольше 25 с")
+    end
+end
+function Signals.onKey(key, now)
+    for _, k in pairs(Signals.KEYS) do
+        if key == k then
+            if elapsed(now, Signals.ours[key]) > 400 and not Signals.manual then
+                Signals.manual = true
+                Signals.side, Signals.hazard, Signals.queue = nil, false, {}
+                emit("signal", {manual = key}, true)
+            end
+            return
+        end
+    end
+end
+local Crash = {holding = false}
+Crash.FORCE = 60
+Crash.WALK = 5
 local function trigger(event, ...)
     local ok = read("triggerServerEvent", event, resourceRoot, ...)
     emit("server_event", {event = event, sent = ok == true}, true)
     return ok == true
 end
-
 local function stopBot(reason)
     if state.bot then
         state.bot = false
@@ -2946,9 +3393,11 @@ local function stopBot(reason)
         end
     end
 end
-
 local function startBot()
     if state.bot then return end
+    Crash.holding, Crash.handsOff = false, nil
+    Signals.manual = nil
+    Signals.setHazard(false, getTickCount())
     controller:reset()
     state.bot = true
     state.tripStart = getTickCount()
@@ -2959,7 +3408,7 @@ local function startBot()
     local sx, sy
     if vehicle then sx, sy = read("getElementPosition", vehicle) end
     state.waypointCursor = waypointStart(finite(sx) and finite(sy) and {x = sx, y = sy} or nil)
-    if not state.recording then
+    if not state.recording and state.autoRecord then
         state.recording = true
         state.autoRecording = true
         state.recordedRoute = nil
@@ -2967,9 +3416,8 @@ local function startBot()
         emit("record_begin", {version = VERSION, route = routeId() or NULL,
             auto = true, in_vehicle = occupied() ~= nil}, true)
     end
-    note("Бот запущен, запись включена")
+    note(state.recording and "Бот запущен, запись включена" or "Бот запущен")
 end
-
 local function selectRoute(id)
     if not finite(id) or id < 1 or id > 9 then return end
     local score, why = routeScore(id)
@@ -2977,7 +3425,52 @@ local function selectRoute(id)
     trigger("snowPlow:npc:route:select", id)
     note("Запрошен маршрут " .. id)
 end
-
+function Crash.qualifies(kind, force, speed)
+    force = finite(force) and force or 0
+    if kind == "vehicle" then return force >= Crash.FORCE end
+    return force >= Crash.FORCE or (finite(speed) and speed >= Crash.WALK)
+end
+function Crash.stop(now, who, kind, force)
+    stopBot("ДТП: столкновение с " .. who)
+    Crash.holding, Crash.handsOff, Crash.at = true, nil, now
+    Signals.setHazard(true, now)
+    local played = read("dfPlayAlertSignal") == true
+    read("outputChatBox", "#FF5555[PlowBot] #FFFFFFДТП: столкновение с " .. who
+        .. ". Стою на аварийке, «Запустить бота» — поеду дальше", 255, 255, 255, true)
+    note("ДТП: столкновение с " .. who .. ". Стою на аварийке — разберись и запусти бота")
+    emit("crash_stop", {kind = kind, played = played,
+        force = finite(force) and math.floor(force * 10 + 0.5) / 10 or NULL}, true)
+end
+function Crash.hold(now, context, vehicle)
+    if Crash.handsOff then return end
+    if not vehicle or not context.inVehicle then
+        Crash.release("водитель вышел из машины")
+        return
+    end
+    local forward = finite(context.forward) and context.forward or 0
+    local ok = applyControls({throttle = 0, steer = 0, handbrake = true,
+        brake = forward > 0.3 and 1 or 0})
+    if not ok then Crash.release("ошибка управления") end
+end
+function Crash.release(why)
+    if not Crash.holding or Crash.handsOff then return end
+    Crash.handsOff = true
+    releaseControls()
+    emit("crash_release", {why = why}, true)
+    note("ДТП: машина у игрока — " .. why .. ". «Запустить бота» — продолжить рейс")
+end
+function Crash.clear(why)
+    if not Crash.holding then return end
+    if not Crash.handsOff then releaseControls() end
+    Crash.holding, Crash.handsOff = false, nil
+    emit("crash_release", {why = why, cleared = true}, true)
+end
+function state.holdCrash(now, context, vehicle)
+    if not Crash.holding or Crash.handsOff then return false end
+    Crash.hold(now, context, vehicle)
+    return Crash.holding and not Crash.handsOff
+end
+state.updateSignals = Signals.update
 local function handleCommand(command, now)
     if type(command) ~= "string" then return end
     local name, argument = command:match("^([%w_]+):?(.*)$")
@@ -2992,6 +3485,13 @@ local function handleCommand(command, now)
     elseif name == "autonomy" then
         state.autonomy = argument == "1"
         note(state.autonomy and "Автономность включена" or "Автономность выключена")
+    elseif name == "autorecord" then
+        state.autoRecord = argument == "1"
+        if not state.autoRecord and state.recording and state.autoRecording then
+            handleCommand("record_stop", now)
+        end
+        note(state.autoRecord and "Автозапись включена: запись — при запуске бота"
+            or "Автозапись выключена: запись — только кнопкой")
     elseif name == "record_start" then
         state.recording = true
         state.autoRecording = nil
@@ -3063,6 +3563,15 @@ local function handleCommand(command, now)
     elseif name == "debug" then
         state.debug = argument == "1"
         note(state.debug and "Отладка включена" or "Отладка выключена")
+    elseif name == "signals" then
+        state.signals = argument == "1"
+        if not state.signals then Signals.set(nil, now, "выключены в панели") end
+        note(state.signals and "Поворотники включены" or "Поворотники выключены")
+    elseif name == "dtp_stop" then
+        state.dtpStop = argument == "1"
+        if not state.dtpStop then Crash.clear("остановка при ДТП выключена") end
+        note(state.dtpStop and "При ДТП бот остановится и включит аварийку"
+            or "При ДТП бот не останавливается")
     elseif name == "save_waypoint" or name == "forget_waypoint" then
         local vehicle = jobVehicle() or occupied()
         local position, heading
@@ -3083,12 +3592,36 @@ local function handleCommand(command, now)
         waypointResize(tonumber(argument))
     elseif name == "editor" then
         state.editor = argument == "1"
-        if state.editor and not (state.editSel and WAYPOINTS[state.editSel]) then
+        if state.editor and not state.editCity then
+            local position = carPosition()
+            if position then
+                local _, cityIndex = City.near(position.x, position.y)
+                editorCity(cityIndex)
+            end
+        end
+        if state.editor and not editorPoint() then
             local nearest = editorNearest()
             if nearest then editorSelect(nearest) end
         end
     elseif name == "wp_select" then
-        editorSelect(argument == "near" and editorNearest() or tonumber(argument))
+        if argument == "gate" or argument == "finish" then editorSelect(argument)
+        else editorSelect(argument == "near" and editorNearest() or tonumber(argument)) end
+    elseif name == "ed_city" then
+        editorCity(tonumber(argument))
+        local nearest = editorNearest()
+        state.editSel = nil
+        if nearest then editorSelect(nearest) end
+    elseif name == "ed_route" then
+        local route = tonumber(argument)
+        state.editRoute = route and route > 0 and route or nil
+    elseif name == "route_new" then
+        local cityIndex, route = argument:match("^(%d+):(%d+)$")
+        editorWork(tonumber(cityIndex), tonumber(route))
+    elseif name == "route_done" then
+        state.workRoute = nil
+        note("Создание маршрута закончено: новые метки — снова в маршрут рейса")
+    elseif name == "city_point" then
+        editorCityPoint(argument)
     elseif name == "wp_nudge" then
         local direction, step = argument:match("^(%a+):([%d%.]+)$")
         editorNudge(direction, step)
@@ -3098,6 +3631,8 @@ local function handleCommand(command, now)
         editorUndo()
     elseif name == "wp_order" then
         editorOrder(tonumber(argument))
+    elseif name == "wp_route" then
+        editorBindRoute()
     elseif name == "dump_waypoints" then
         waypointDump()
         note(string.format("Метки выгружены в лог: %d шт.", #WAYPOINTS))
@@ -3151,7 +3686,6 @@ local function handleCommand(command, now)
         else note("Не удалось нажать «" .. SPRAY_KEY .. "»") end
     end
 end
-
 local function arriveHome(now)
     if elapsed(now, state.homeTick) < 5000 then return end
     state.homeTick = now
@@ -3168,7 +3702,6 @@ local function arriveHome(now)
         note("На базе, но маршрут оценить не удалось")
     end
 end
-
 local Auto = {
     ROUTE = 1,
     NPC = {[1] = {2230.41, 2450.86, 311.42}, [2] = {21.13, 502.15, 93.15}, [3] = {2110.84, -2822.5, 184.61}},
@@ -3178,9 +3711,7 @@ local Auto = {
         deliver = "сдаю транспорт", after = "машина сдана"},
     pressed = {}, release = {},
 }
-
 function Auto.route() return state.autoRoute or Auto.ROUTE end
-
 function Auto.npc()
     local location = locationOfRoute(Auto.route()) or 1
     local x, y, rot
@@ -3199,7 +3730,6 @@ function Auto.npc()
     return {x = x, y = y, standX = x - math.sin(r) * 1.3, standY = y + math.cos(r) * 1.3,
         id = "work:snowPlow:" .. location}
 end
-
 function Auto.set(stage, why)
     if Auto.stage == stage then return end
     Auto.stage, Auto.since, Auto.step = stage, getTickCount(), 0
@@ -3209,27 +3739,23 @@ function Auto.set(stage, why)
         y = finite(y) and Smart.round(y) or NULL, route = Auto.route()}, true)
     note("Автономность: " .. (Auto.TEXT[stage] or stage) .. (why and (" — " .. why) or ""))
 end
-
 function Auto.control(name, on)
     if Auto.pressed[name] == on then return end
     read("setPedControlState", localPlayer, name, on)
     Auto.pressed[name] = on
 end
-
 function Auto.stopWalk()
     for name, on in pairs(Auto.pressed) do
         if on then read("setPedControlState", localPlayer, name, false) end
     end
     Auto.pressed, Auto.walk, Auto.dodge = {}, nil, nil
 end
-
 function Auto.tap(key, now)
     local ok = read("dfEmulateKey", key, true) == true
     if ok then Auto.release[key] = now + 80 end
     emit("autonomy_key", {key = key, ok = ok, stage = Auto.stage or NULL}, true)
     return ok
 end
-
 function Auto.keys(now)
     for key, at in pairs(Auto.release) do
         if now >= at then
@@ -3238,7 +3764,6 @@ function Auto.keys(now)
         end
     end
 end
-
 function Auto.walkTo(now, x, y, arrive)
     local px, py = read("getElementPosition", localPlayer)
     if not finite(px) or not finite(py) then return false end
@@ -3264,13 +3789,11 @@ function Auto.walkTo(now, x, y, arrive)
     Auto.control("jump", dodging and now < Auto.dodge.jump)
     return false, d
 end
-
 function Auto.vehicle()
     local vehicle = read("getVehicle")
     if valid(vehicle) then return vehicle end
     return jobVehicle()
 end
-
 function Auto.door(vehicle)
     local x, y = read("getElementPosition", vehicle)
     local _, _, rz = read("getElementRotation", vehicle)
@@ -3279,7 +3802,6 @@ function Auto.door(vehicle)
     local fx, fy = -math.sin(r), math.cos(r)
     return {x = x + fx * 1.5 - fy * 2.6, y = y + fy * 1.5 + fx * 2.6}
 end
-
 function Auto.fail(why)
     state.autonomy = false
     Auto.stopWalk()
@@ -3287,7 +3809,6 @@ function Auto.fail(why)
     emit("autonomy", {stage = "stopped", why = why}, true)
     note("Автономность выключена: " .. why)
 end
-
 function Auto.update(now, context)
     Auto.keys(now)
     if not state.autonomy then
@@ -3302,7 +3823,6 @@ function Auto.update(now, context)
     local inside = vehicle ~= nil and occupied() == vehicle
     local stage = Auto.stage
     local age = elapsed(now, Auto.since)
-
     if not stage then
         if Auto.window then Auto.set("deliver")
         elseif vehicle and inside and (context.route or state.bot) then
@@ -3312,7 +3832,6 @@ function Auto.update(now, context)
         else Auto.set("to_npc") end
         return
     end
-
     if stage == "to_npc" then
         local car = occupied()
         if car then
@@ -3421,7 +3940,7 @@ function Auto.update(now, context)
     elseif stage == "drive" then
         if not inside then Auto.set(vehicle and "to_vehicle" or "to_npc", "не в машине") return end
         if Auto.window or state.finished then Auto.set("deliver") return end
-        if not state.bot then
+        if not state.bot and not Crash.holding then
             if context.route or #plan.items > 0 then startBot() end
         end
     elseif stage == "deliver" then
@@ -3444,7 +3963,6 @@ function Auto.update(now, context)
         end
     end
 end
-
 local Guard = {
     ADMINS = {
     ["185.71.66.80:22003"] = [[
@@ -3516,16 +4034,13 @@ Nikita_Muver Aquamarine_Vercetti Daniele_Homyakov Pavel_Homyakov]],
 for nick in tostring(Guard.ADMINS[read("getServerIp", true)] or ""):gmatch("%S+") do
     Guard.known[nick] = true
 end
-
 function Guard.active() return state.bot == true or state.autonomy == true end
-
 function Guard.sync()
     local active = Guard.active()
     if Guard.monitor == active then return end
     Guard.monitor = active
     read("dfSetAlertMonitorEnabled", active)
 end
-
 function Guard.alert(key, text, data, cooldown)
     local now = getTickCount()
     if elapsed(now, Guard.alerts[key]) < (cooldown or 5000) then return false end
@@ -3535,7 +4050,6 @@ function Guard.alert(key, text, data, cooldown)
     emit("safety_alert", {kind = key, text = text, played = played, data = data or NULL}, true)
     return played
 end
-
 function Guard.nearbyById(id)
     local px, py, pz = read("getElementPosition", localPlayer)
     if not finite(px) then return nil end
@@ -3553,7 +4067,6 @@ function Guard.nearbyById(id)
         end
     end
 end
-
 function Guard.chat(text, r, g, b, messageType)
     if not Guard.active() or type(text) ~= "string" or (messageType ~= nil and messageType ~= 0) then
         return
@@ -3581,7 +4094,6 @@ function Guard.chat(text, r, g, b, messageType)
         end
     end
 end
-
 Guard.KINDS = {static = "в препятствие", ped = "в пешехода", parked = "в стоящую машину",
     queue = "в машину", traffic = "в машину"}
 function Guard.stuck(out)
@@ -3592,7 +4104,6 @@ function Guard.stuck(out)
     Guard.alert("stuck", reason == "boxed" and ("упёрся " .. what .. ", выхода не вижу — нужна помощь")
         or ("упёрся " .. what .. ", выбираюсь"), {reason = reason}, 30000)
 end
-
 local function pushUi(context)
     bridge.update("heartbeat", getTickCount())
     bridge.update("bot", state.bot and "1" or "0")
@@ -3621,6 +4132,10 @@ local function pushUi(context)
     bridge.update("best_route", best and tostring(best) or "--")
     bridge.update("speed_limit", string.format("%d", state.speedLimitSpeedo or 50))
     bridge.update("debug", state.debug and "1" or "0")
+    bridge.update("signals", state.signals and "1" or "0")
+    bridge.update("dtp_stop", state.dtpStop and "1" or "0")
+    bridge.update("dtp_hold", Crash.holding and "1" or "0")
+    bridge.update("autorecord", state.autoRecord and "1" or "0")
     bridge.update("waypoints", string.format("%d", #WAYPOINTS))
     bridge.update("waypoint_cursor", string.format("%d", math.min(state.waypointCursor or 1, #WAYPOINTS)))
     local lastIndex = state.lastWaypoint
@@ -3632,22 +4147,57 @@ local function pushUi(context)
     bridge.update("wp_file", state.marksFile or "")
     if state.editor then
         local position = carPosition()
-        local rows = {}
+        local function away(p)
+            return position and math.sqrt((p[1] - position.x) ^ 2 + (p[2] - position.y) ^ 2) or -1
+        end
+        local cityIndex = state.editCity or 0
+        local city = City.list[cityIndex]
+        local names = {}
+        for i, c in ipairs(City.list) do names[i] = c.name end
+        bridge.update("ed_cities", table.concat(names, "|"))
+        bridge.update("ed_city", tostring(cityIndex))
+        local rows, counts = {}, {}
         for index, point in ipairs(WAYPOINTS) do
-            local d = position and math.sqrt((point[1] - position.x) ^ 2
-                + (point[2] - position.y) ^ 2) or -1
-            rows[#rows + 1] = string.format("%d,%g,%.0f,%s", index, point[4] or K.WAYPOINT_MID, d,
-                point[5] and tostring(point[5]) or "-")
+            local _, at = City.ofMark(point)
+            if at == cityIndex then
+                if point[5] then counts[point[5]] = (counts[point[5]] or 0) + 1 end
+                if not state.editRoute or point[5] == state.editRoute or not point[5] then
+                    rows[#rows + 1] = string.format("%d,%g,%.0f,%s", index, point[4] or K.WAYPOINT_MID,
+                        away(point), point[5] and tostring(point[5]) or "-")
+                end
+            end
         end
         bridge.update("wp_list", table.concat(rows, ";"):sub(1, 4000))
-        local index = state.editSel
-        local point = index and WAYPOINTS[index]
+        local routes = {}
+        for _, id in ipairs(city and City.routes(cityIndex) or {}) do
+            local info = type(_G.tRoutes) == "table" and _G.tRoutes[id] or nil
+            local title = type(info) == "table" and tostring(info.name or "") or ""
+            routes[#routes + 1] = string.format("%d:%s:%d", id, (title:gsub("[:;|]", " ")), counts[id] or 0)
+        end
+        bridge.update("ed_routes", table.concat(routes, ";"))
+        bridge.update("ed_route", tostring(state.editRoute or 0))
+        bridge.update("ed_work", state.workRoute and string.format("%d", state.workRoute) or "")
+        local points = {}
+        for _, role in ipairs(City.ROLES) do
+            local p = city and city[role]
+            if p then points[#points + 1] = string.format("%s,%g,%.0f", role, p[4] or 0, away(p)) end
+        end
+        bridge.update("ed_points", table.concat(points, ";"))
+        local lights = {}
+        for _, light in ipairs(TRAFFIC) do
+            local _, at = City.near(light[1], light[2])
+            if at == cityIndex then
+                lights[#lights + 1] = string.format("%d,%.0f,%.0f", light[3] or 0, light[4] or 0, away(light))
+            end
+        end
+        bridge.update("ed_lights", table.concat(lights, ";"))
+        local sel = state.editSel
+        local point, label = editorPoint(sel)
         if point then
-            local d = position and math.sqrt((point[1] - position.x) ^ 2
-                + (point[2] - position.y) ^ 2) or -1
-            bridge.update("wp_edit", string.format("%d|%.2f|%.2f|%.1f|%g|%s|%.0f|%d", index,
-                point[1], point[2], point[3] or 0, point[4] or K.WAYPOINT_MID,
-                point[5] and tostring(point[5]) or "-", d, #(state.editUndo or {})))
+            bridge.update("wp_edit", string.format("%d|%.2f|%.2f|%.1f|%g|%s|%.0f|%d|%s",
+                type(sel) == "number" and sel or 0, point[1], point[2], point[3] or 0,
+                point[4] or K.WAYPOINT_MID, type(sel) == "number" and point[5] and tostring(point[5]) or "-",
+                away(point), #(state.editUndo or {}), type(sel) == "string" and sel or label))
         else
             bridge.update("wp_edit", "")
         end
@@ -3658,7 +4208,6 @@ local function pushUi(context)
     bridge.update("traffic_state", lightState and string.format("%d", lightState) or "--")
     bridge.update("traffic_info", string.format("В памяти: %d. Сохраняй, стоя на стоп-линии, "
         .. "когда горит зелёный.", #TRAFFIC))
-
     local out = state.lastOut or {}
     local total = context.points or 0
     local dash = {
@@ -3687,7 +4236,6 @@ local function pushUi(context)
     }
     bridge.update("dashboard", table.concat(dash, "|"))
 end
-
 local function collect(now)
     local context = {}
     context.ready = type(_G.tRoutesPoints) == "table" and type(_G.getJobVehicle) == "function"
@@ -3711,7 +4259,6 @@ local function collect(now)
     if context.route then state.employedSeen = true end
     return context
 end
-
 local function debugAim(position, point, offset)
     if not point then return nil end
     if not finite(offset) or math.abs(offset) <= 0.05 then return {x = point.x, y = point.y} end
@@ -3722,7 +4269,6 @@ local function debugAim(position, point, offset)
     local lead = math.min(len, 30)
     return {x = position.x + nx * lead + ny * offset, y = position.y + ny * lead - nx * offset}
 end
-
 local function beyondMark(step, position, x, y)
     if not step or step.item.kind ~= "mark" or step.rail or step.final or not step.next then
         return false
@@ -3732,7 +4278,6 @@ local function beyondMark(step, position, x, y)
     return segmentDistance(x, y, position.x, position.y, mx, my) > clear
         and segmentDistance(x, y, mx, my, step.next.x, step.next.y) > clear
 end
-
 local function applyStepShift(step, position, heading, context)
     if not step then return end
     if step.item.kind == "mark" and not step.rail then
@@ -3754,16 +4299,13 @@ local function applyStepShift(step, position, heading, context)
     end
     context.railShift = shift
 end
-
 local function round(value, places)
     if not finite(value) then return nil end
     local factor = 10 ^ (places or 2)
     return math.floor(value * factor + 0.5) / factor
 end
-
 local inputNames = {"accelerate", "brake_reverse", "vehicle_left", "vehicle_right",
     "handbrake", "sub_mission"}
-
 local function playerInput()
     local input = {}
     for _, name in ipairs(inputNames) do
@@ -3772,7 +4314,6 @@ local function playerInput()
     end
     return input
 end
-
 local function recordRoute(context)
     if state.recordedRoute == context.route then return end
     state.recordedRoute = context.route
@@ -3797,7 +4338,6 @@ local function recordRoute(context)
         points = list}, true)
     note("Маршрут записан: " .. #list .. " точек")
 end
-
 local function trackCheckpoints(now, context, position)
     if state.lastIndex == context.index then return end
     local previous = state.lastIndex
@@ -3823,7 +4363,6 @@ local function trackCheckpoints(now, context, position)
     note(string.format("Точка %d/%d пройдена%s", previous, context.points or 0,
         miss and string.format(" (мимо центра %.1f м)", miss) or ""))
 end
-
 local function recordSample(now, context, position, heading, frozen)
     if elapsed(now, state.sampleTick) < 50 then return end
     state.sampleTick = now
@@ -3883,7 +4422,6 @@ local function recordSample(now, context, position, heading, frozen)
             squeeze = round(state.lastOut.detail and state.lastOut.detail.squeeze, 2)} or NULL,
     })
 end
-
 local function onFrame()
     local now = getTickCount()
     state.frame = state.frame + 1
@@ -3894,7 +4432,6 @@ local function onFrame()
         handleCommand(command, now)
         state.uiTick = nil
     end
-
     if elapsed(now, state.jitterTick) >= 12000 then
         state.jitterTick = now
         state.jitter = (math.random() * 2 - 1) * 5
@@ -3909,7 +4446,6 @@ local function onFrame()
     if state.bot and controller.blockedSince and elapsed(now, controller.blockedSince) > 30000 then
         Guard.alert("waiting", "стою за помехой больше 30 с — взгляни", nil, 60000)
     end
-
     local vehicle = context.vehicle
     local position, heading, frozen, target
     if vehicle then
@@ -4047,7 +4583,7 @@ local function onFrame()
         end
         state.pathRail = step ~= nil and step.rail ~= nil
         if step and not step.rail and frame and frame.near then
-            local ax, ay, lead = Path.aim(frame.s, context.speed)
+            local ax, ay, lead = Path.steerAim(frame, position, heading, context.speed)
             step.aim = {x = ax, y = ay, z = position.z}
             context.pathLead = lead
             context.pathSpeed = Path.speedAhead(frame.s, context.speed)
@@ -4092,11 +4628,9 @@ local function onFrame()
             end
         end
     end
-
     recordRoute(context)
     trackCheckpoints(now, context, position)
     if target then state.lastTarget = target end
-
     if state.bot then
         if not context.inVehicle then
             if state.owned then releaseControls() end
@@ -4104,6 +4638,16 @@ local function onFrame()
         elseif not context.route or not context.index then
             local rest, restGap, restIndex, aim, followUp, restFinal, steer
             local step = position and #plan.items > 0 and planStep(position, heading, nil, nil, context.speed) or nil
+            if step and plan.full then
+                state.pathSlot = step.item.slot or state.pathSlot
+                local frame = context.pathFrame
+                if not step.rail and frame and frame.near then
+                    local ax, ay, lead = Path.steerAim(frame, position, heading, context.speed)
+                    step.aim = {x = ax, y = ay, z = position.z}
+                    context.pathLead = lead
+                    context.pathSpeed = Path.speedAhead(frame.s, context.speed)
+                end
+            end
             applyStepShift(step, position, heading, context)
             if step and step.item.kind == "mark" then
                 rest, aim, restGap, steer = step.item, step.target, step.distance, step.aim
@@ -4139,6 +4683,7 @@ local function onFrame()
                         and context.forward < -0.8,
                     yield = elapsed(now, state.yieldAt) < 2500,
                     sharp = step ~= nil and step.sharp == true,
+                    pathSpeed = context.pathSpeed,
                     gapLeft = context.gapLeft, gapRight = context.gapRight,
                     sideLeft = context.sideLeft, sideRight = context.sideRight,
                     light = context.light, limit = state.speedLimit,
@@ -4166,6 +4711,9 @@ local function onFrame()
                 elseif out.reason == "arrived" and context.waypointFinal then
                     state.status = string.format("Финиш: торможу до нуля (%d)",
                         math.floor(context.speed or 0))
+                elseif not restIndex then
+                    state.status = string.format("Маршрут сдан, еду: %s, %d м",
+                        context.waypointKind or "точка города", math.floor(restGap))
                 else
                     state.status = string.format("Маршрут сдан, иду по меткам: #%d/%d, %d м",
                         restIndex, #WAYPOINTS, math.floor(restGap))
@@ -4321,10 +4869,10 @@ local function onFrame()
                 if not ok then stopBot("ошибка управления: " .. tostring(failedName)) end
             end
         end
-    elseif state.owned then
+    elseif not state.holdCrash(now, context, vehicle) and state.owned then
         releaseControls()
     end
-
+    state.updateSignals(now, context, heading)
     if state.recording then
         recordSample(now, context, position, heading, frozen)
         if elapsed(now, state.flushTick) >= 2000 then
@@ -4332,7 +4880,6 @@ local function onFrame()
             flush(false)
         end
     end
-
     if context.route and context.route ~= state.lastRoute then
         state.finished = nil
         state.waypointCursor = waypointStart(position)
@@ -4343,7 +4890,6 @@ local function onFrame()
     end
     if not context.vehicle and state.homeIntent == "return" then state.homeIntent = nil end
     if not state.homeIntent then state.homeNoted = nil end
-
     if not context.route and state.lastRoute then
         state.trips = state.trips + 1
         state.lastIndex, state.lastTarget = nil, nil
@@ -4351,7 +4897,6 @@ local function onFrame()
         flush(true)
     end
     state.lastRoute = context.route
-
     if elapsed(now, state.uiTick) >= 200 then
         state.uiTick = now
         if state.autonomy and Auto.stage and Auto.stage ~= "drive" and not state.bot then
@@ -4360,20 +4905,19 @@ local function onFrame()
         pushUi(context)
     end
 end
-
 local function rgba(r, g, b, a)
     local fn = _G.tocolor
     if type(fn) ~= "function" then return 4294967295 end
     local ok, value = pcall(fn, r, g, b, a)
     return ok and value or 4294967295
 end
-
 local function markGround(point, origin)
-    local ground = read("getGroundPosition", point[1], point[2], origin.z + 30)
+    local ground = read("getGroundPosition", point[1], point[2], origin.z + 2)
+    if finite(ground) and ground > origin.z - 6 and ground <= origin.z + 2 then return ground end
+    ground = read("getGroundPosition", point[1], point[2], origin.z + 30)
     if finite(ground) and math.abs(ground - origin.z) < 40 then return ground end
     return origin.z - 1
 end
-
 local function drawWaypoints(origin)
     local selected = state.editor and state.editSel or state.lastWaypoint
     for index, point in ipairs(WAYPOINTS) do
@@ -4410,8 +4954,62 @@ local function drawWaypoints(origin)
             end
         end
     end
+    for _, city in ipairs(City.list) do
+        for _, role in ipairs(City.ROLES) do
+            local point = city[role]
+            if point and math.sqrt((point[1] - origin.x) ^ 2 + (point[2] - origin.y) ^ 2) < 150 then
+                local chosen = state.editor and state.editSel == role
+                    and City.list[state.editCity or 0] == city
+                local colour = chosen and rgba(255, 210, 90, 235)
+                    or role == "gate" and rgba(255, 90, 210, 220) or rgba(255, 80, 80, 220)
+                local z = markGround(point, origin)
+                read("dxDrawLine3D", point[1], point[2], z, point[1], point[2], z + 4, colour, 5)
+                local px, py
+                for step = 0, 24 do
+                    local a = step / 24 * math.pi * 2
+                    local x, y = point[1] + math.cos(a) * point[4], point[2] + math.sin(a) * point[4]
+                    if px then read("dxDrawLine3D", px, py, z + 0.2, x, y, z + 0.2, colour, 3) end
+                    px, py = x, y
+                end
+                local sx, sy = read("getScreenFromWorldPosition", point[1], point[2], z + 4.4)
+                if finite(sx) and finite(sy) then
+                    read("dxDrawText", city.name .. (role == "gate" and ": выезд/въезд" or ": финиш"),
+                        sx, sy, sx, sy, colour, 1.2, "default-bold", "center", "bottom")
+                end
+            end
+        end
+    end
+    if state.editor then
+        for _, light in ipairs(TRAFFIC) do
+            if math.sqrt((light[1] - origin.x) ^ 2 + (light[2] - origin.y) ^ 2) < 150 then
+                local colour = rgba(110, 200, 255, 230)
+                local z = markGround(light, origin)
+                read("dxDrawLine3D", light[1], light[2], z, light[1], light[2], z + 5, colour, 5)
+                local r = math.rad(light[4] or 0)
+                read("dxDrawLine3D", light[1], light[2], z + 0.3, light[1] - math.sin(r) * 4,
+                    light[2] + math.cos(r) * 4, z + 0.3, colour, 4)
+                local sx, sy = read("getScreenFromWorldPosition", light[1], light[2], z + 5.4)
+                if finite(sx) and finite(sy) then
+                    read("dxDrawText", string.format("светофор, зелёный = %d", light[3] or 0), sx, sy,
+                        sx, sy, colour, 1.1, "default-bold", "center", "bottom")
+                end
+            end
+        end
+    end
+    for _, b in ipairs(Bumps.list) do
+        if math.sqrt((b[1] - origin.x) ^ 2 + (b[2] - origin.y) ^ 2) < 150 then
+            local colour = rgba(255, 150, 40, 230)
+            local z = markGround(b, origin) + 0.3
+            read("dxDrawLine3D", b[1] - 0.7, b[2] - 0.7, z, b[1] + 0.7, b[2] + 0.7, z, colour, 4)
+            read("dxDrawLine3D", b[1] - 0.7, b[2] + 0.7, z, b[1] + 0.7, b[2] - 0.7, z, colour, 4)
+            local sx, sy = read("getScreenFromWorldPosition", b[1], b[2], z + 1.2)
+            if finite(sx) and finite(sy) then
+                read("dxDrawText", string.format("удар ×%d", b[3]), sx, sy, sx, sy, colour, 1.1,
+                    "default-bold", "center", "bottom")
+            end
+        end
+    end
 end
-
 local function onDebugRender()
     if not state.debug and not state.editor then return end
     local vehicle = jobVehicle() or occupied() or localPlayer
@@ -4536,7 +5134,6 @@ local function onDebugRender()
         y = y + 20
     end
 end
-
 local function guard(fn, name)
     return function(...)
         local ok, err = pcall(fn, ...)
@@ -4546,14 +5143,12 @@ local function guard(fn, name)
         end
     end
 end
-
 local function hook(name, element, fn)
     local callback = guard(fn, name)
     local ok = read("addEventHandler", name, element, callback)
     state.hookStatus[name] = ok == true
     if ok then state.hooks[#state.hooks + 1] = {name, element, callback} end
 end
-
 hook("onClientPreRender", root, onFrame)
 hook("onClientRender", root, onDebugRender)
 hook("onClientKey", root, function(key, pressed)
@@ -4573,8 +5168,17 @@ end)
 hook("onClientVehicleExit", root, function(player)
     if player == localPlayer and state.bot then stopBot("выход из машины") end
 end)
-
-hook("onClientVehicleCollision", root, function(collider, force)
+hook("onClientKey", root, function(key, pressed)
+    if not pressed then return end
+    if read("isChatBoxInputActive") == true or read("isConsoleActive") == true then return end
+    if read("dfMenuOpen") == true then return end
+    Signals.onKey(key, getTickCount())
+    if Crash.holding and (key == "w" or key == "s" or key == "a" or key == "d"
+        or key == "arrow_u" or key == "arrow_d" or key == "arrow_l" or key == "arrow_r") then
+        Crash.release("руль у игрока")
+    end
+end)
+hook("onClientVehicleCollision", root, function(collider, force, _, cx, cy)
     local vehicle = jobVehicle()
     if not vehicle or source ~= vehicle then return end
     if state.bot and valid(collider) then
@@ -4584,7 +5188,13 @@ hook("onClientVehicleCollision", root, function(collider, force)
         state.crashContacts = state.crashContacts or setmetatable({}, {__mode = "k"})
         if who and elapsed(now, state.crashContacts[collider]) >= 1500 then
             state.crashContacts[collider] = now
-            if elapsed(now, state.crashAlertAt) >= 30000 then
+            local vx, vy, vz = read("getElementVelocity", vehicle)
+            local speed = finite(vx) and finite(vy)
+                and math.sqrt(vx * vx + vy * vy + (finite(vz) and vz * vz or 0)) * 180 or nil
+            if state.dtpStop and Crash.qualifies(kind, force, speed) then
+                state.crashAlertAt = now
+                Crash.stop(now, who, kind, force)
+            elseif elapsed(now, state.crashAlertAt) >= 30000 then
                 state.crashAlertAt = now
                 local played = read("dfPlayAlertSignal") == true
                 read("outputChatBox", "#FF5555[PlowBot] #FFFFFFДТП: столкновение с " .. who,
@@ -4605,6 +5215,21 @@ hook("onClientVehicleCollision", root, function(collider, force)
             end
         end
     end
+    if state.bot and finite(cx) and finite(cy) then
+        local kind = valid(collider) and read("getElementType", collider) or nil
+        local now = getTickCount()
+        local same = state.bumpX and elapsed(now, state.bumpAt) < 2000
+            and (state.bumpX - cx) ^ 2 + (state.bumpY - cy) ^ 2 < 4
+        if kind ~= "vehicle" and kind ~= "player" and kind ~= "ped" and not same
+            and elapsed(now, state.bumpAt) >= 500 then
+            state.bumpAt, state.bumpX, state.bumpY = now, cx, cy
+            local b = Bumps.learn(cx, cy)
+            emit("bump_learned", {x = round(cx), y = round(cy), hits = b[3], total = #Bumps.list,
+                force = finite(force) and round(force, 1) or NULL}, true)
+            note(string.format("Удар выучен: здесь запас +%.1f м (раз %d)", Bumps.margin(b), b[3]))
+            marksSave("удар выучен")
+        end
+    end
     if not state.recording then return end
     local now = getTickCount()
     local strong = finite(force) and force >= 60
@@ -4621,7 +5246,6 @@ hook("onClientVehicleCollision", root, function(collider, force)
         index = _G.CURRENT_POSITION_ID or NULL, muted = state.collisionMuted or 0}, true)
     state.collisionMuted = 0
 end)
-
 hook("onClientChatMessage", root, function(text, r, g, b, messageType)
     if type(text) ~= "string" then return end
     Guard.chat(text, r, g, b, messageType)
@@ -4650,7 +5274,6 @@ hook("onClientChatMessage", root, function(text, r, g, b, messageType)
         end
     end
 end)
-
 for _, name in ipairs({"snowPlow:initRoute", "snowPlow:resetRoute",
     "snowPlow:setPlayerJobVehicle", "snowPlow:syncWorkData", "showPlow:syncSprayAmmount"}) do
     local event = name
@@ -4661,7 +5284,6 @@ for _, name in ipairs({"snowPlow:initRoute", "snowPlow:resetRoute",
             true)
     end)
 end
-
 function Auto.tripOver(why)
     if #plan.items == 0 and Path.n == 0 then return end
     plan.route, plan.items, plan.serverCount = nil, {}, 0
@@ -4673,7 +5295,6 @@ end
 hook("snowPlow:resetRoute", resourceRoot, function()
     Auto.tripOver("маршрут сброшен сервером")
 end)
-
 hook("snowPlow:setPlayerJobVehicle", resourceRoot, function()
     Auto.given = getTickCount()
 end)
@@ -4702,13 +5323,19 @@ hook("onClientElementDataChange", root, function(key, old, new)
     emit("autonomy_data", {key = tostring(key), old = tostring(old), new = tostring(new),
         who = source == localPlayer and "player" or "vehicle"}, true)
 end)
-
+hook("onClientElementDataChange", root, function(key, old, new)
+    if not Signals.watchUntil or getTickCount() > Signals.watchUntil then return end
+    if source ~= localPlayer and source ~= jobVehicle() then return end
+    emit("signal_data", {key = tostring(key), old = tostring(old), new = tostring(new),
+        who = source == localPlayer and "player" or "vehicle"}, true)
+end)
 local cleanup
 cleanup = function()
     if state.closed then return end
     state.closed = true
     stopBot("выгрузка скрипта")
     releaseControls()
+    for key in pairs(Signals.down) do read("dfEmulateKey", key, false) end
     Auto.stopWalk()
     read("dfSetAlertMonitorEnabled", false)
     flush(true)
@@ -4721,7 +5348,6 @@ end
 hook("onClientResourceStop", resourceRoot, cleanup)
 _G.__DarkFlamePlowCleanup = cleanup
 if type(onUnload) == "function" then onUnload(cleanup) end
-
 marksLoad()
 bridge.update("loaded", "1")
 note("PlowBot " .. VERSION .. " подключён")

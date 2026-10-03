@@ -27,6 +27,20 @@ inline int VirtualKey(std::string key)
         const unsigned char value = static_cast<unsigned char>(key.front());
         if((value >= 'A' && value <= 'Z') || (value >= '0' && value <= '9'))
             return value;
+        switch(value)
+        {
+        case '[': return VK_OEM_4;
+        case ']': return VK_OEM_6;
+        case ';': return VK_OEM_1;
+        case '\'': return VK_OEM_7;
+        case ',': return VK_OEM_COMMA;
+        case '.': return VK_OEM_PERIOD;
+        case '/': return VK_OEM_2;
+        case '\\': return VK_OEM_5;
+        case '`': return VK_OEM_3;
+        case '-': return VK_OEM_MINUS;
+        case '=': return VK_OEM_PLUS;
+        }
         const SHORT code = VkKeyScanA(key.front());
         return code == -1 ? 0 : LOBYTE(code);
     }
