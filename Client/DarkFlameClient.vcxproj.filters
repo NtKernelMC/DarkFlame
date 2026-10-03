@@ -43,6 +43,7 @@
     <ClCompile Include="dllmain.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="logger.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="pilot_telemetry.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="plow_bot.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="lua_args_hook.cpp"><Filter>Lua Runtime\Bridge</Filter></ClCompile>
     <ClCompile Include="lua_bridge.cpp"><Filter>Lua Runtime\Bridge</Filter></ClCompile>
     <ClCompile Include="memory_module_dumper.cpp"><Filter>Source Files</Filter></ClCompile>
@@ -110,6 +111,7 @@
     <ClInclude Include="gui.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="logger.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="pilot_telemetry.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="plow_bot.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="lua_args_hook.h"><Filter>Lua Runtime\Bridge</Filter></ClInclude>
     <ClInclude Include="lua_bridge.h"><Filter>Lua Runtime\Bridge</Filter></ClInclude>
     <ClInclude Include="hook_utils.h"><Filter>Header Files</Filter></ClInclude>

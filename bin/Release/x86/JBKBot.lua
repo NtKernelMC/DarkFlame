@@ -1,8 +1,7 @@
 local api = {
     triggerEvent = dfTriggerEvent,
     alert = dfPlayAlertSignal,
-    key = dfEmulateKey,
-    menuOpen = dfMenuOpen,
+    mouse = dfEmulateMouseButton,
     alertMonitor = dfSetAlertMonitorEnabled,
     takeCommand = dfJbkTakeCommand,
     updateState = dfJbkUpdate,
@@ -15,7 +14,6 @@ for name, fn in pairs(api) do
 end
 
 local _STATE = false
-local botDimension
 local syncOptionsBotState = function() end
 local syncNativeJbkState = function() end
 local cancelAutoResume = function() end
@@ -36,9 +34,8 @@ local controlStates = {}
 
 local function setBotControl(control, pressed)
     pressed = pressed and true or false
+    if controlStates[control] == pressed then return true end
     if not BOT_CONTROLS[control] then return false end
-    -- Reassert held controls after the game clears input on focus changes.
-    if not pressed and controlStates[control] == false then return true end
     local result = setPedControlState(localPlayer, control, pressed)
     if result then controlStates[control] = pressed end
     return result
@@ -46,30 +43,14 @@ end
 
 local function releaseBotControls()
     for control in pairs(BOT_CONTROLS) do
-        local result = setPedControlState(localPlayer, control, false)
-        if result then controlStates[control] = false end
+        setPedControlState(localPlayer, control, false)
+        controlStates[control] = false
     end
 end
-
-local pulseHeld, pulseRelease, pulseLast = false, 0, 0
-
-local function releasePulseKey()
-    if pulseHeld and api.key("r", false) then pulseHeld = false end
-end
-
-setTimer(function()
-    local now = getTickCount()
-    local blocked = api.menuOpen() or isChatBoxInputActive()
-    if pulseHeld and (not _STATE or now >= pulseRelease or blocked) then releasePulseKey() end
-    if _STATE and not blocked and not pulseHeld and now - pulseLast >= 2000 then
-        pulseLast = now
-        pulseHeld = api.key("r", true) == true
-        pulseRelease = now + 100
-    end
-end, 50, 0)
 
 local Settings = {
     AllowBunnyHop = true,
+    AntiAFK = true,
     BunnyHopDelay = 1000,
     BunnyHopMinDistance = 30,
     RotationSpeed = 5,
@@ -812,9 +793,7 @@ changeBotState = function(state)
         end
         -- Запускаем живую походку если включена
         if WALK and WALK.enabled then startWalk() end
-        botDimension = getElementDimension(localPlayer)
     else
-        botDimension = nil
         destroyHelpingMarkers()
         STORAGE.MARKERS = {}
         STORAGE.PATH_ID = 0
@@ -822,7 +801,7 @@ changeBotState = function(state)
         STORAGE.TARGET = {element = nil, index = 0}
         
         releaseBotControls()
-        releasePulseKey()
+        api.mouse("right", false)
         
         if bunnyHopTimer then
             killTimer(bunnyHopTimer); bunnyHopTimer = nil
@@ -836,20 +815,6 @@ changeBotState = function(state)
     return true
 end
 
-
-setTimer(function()
-    if not _STATE or botDimension == nil then return end
-    local current = getElementDimension(localPlayer)
-    if current == botDimension then return end
-    local previous = botDimension
-    playAlert("dimension_change", 0)
-    cancelAutoResume()
-    _STATE = false
-    changeBotState(false)
-    outputChatBox(string.format("#FF4444[JBK] #FFFFFFDimension персонажа изменился: %s -> %s. Бот выключен.",
-        tostring(previous), tostring(current)), 255,255,255,true)
-end, 2000, 0)
-
 local function toggleBot()
     cancelAutoResume()
     _STATE = not _STATE
@@ -857,7 +822,14 @@ local function toggleBot()
     outputChatBox("#0037FF[JBK] #FFFFFFЖБК Бот "..(_STATE and "#00FF00включен." or "#F00000выключен."), 255, 255, 255, true)
 end
 
-
+setTimer(function()
+    if not _STATE or not Settings.AntiAFK then
+        api.mouse("right", false)
+        return
+    end
+    api.mouse("right", true)
+    setTimer(function() api.mouse("right", false) end, 75, 1)
+end, 2000, 0)
 
 -- ============================================================
 -- JBK DEBUG v0.1 — редактор промежуточных точек
@@ -1431,7 +1403,7 @@ local onUpdateStrict = function()
     end
 end
 
-addEventHandler("onClientPreRender", root, onUpdateStrict)
+local movementTimer = setTimer(onUpdateStrict, 50, 0)
 
 -- ============================================================
 -- JBK OPTIONS — единое окно настроек /jbkoptions
@@ -2865,6 +2837,8 @@ createOptionsWindow = function()
     local chkAW = guiCreateCheckBox(10, 433, 200, 18,
         "Останавливать бота при админе", AW.stopOnAdmin, false, OPT.window)
 
+    local chkAntiAFK = guiCreateCheckBox(220, 433, 220, 18,
+        "Anti-AFK: ПКМ каждые 2 сек", Settings.AntiAFK, false, OPT.window)
 
     -- ===== СЕКЦИЯ: УДАР ПО АДМИНУ =====
     guiCreateLabel(10, 476, 580, 16, "УДАР ПО АДМИНУ", false, OPT.window)
@@ -2934,6 +2908,12 @@ createOptionsWindow = function()
         AW.stopOnAdmin = guiCheckBoxGetSelected(chkAW)
     end, false)
 
+    addEventHandler("onClientGUIClick", chkAntiAFK, function()
+        Settings.AntiAFK = guiCheckBoxGetSelected(chkAntiAFK)
+        if not Settings.AntiAFK then
+            api.mouse("right", false)
+        end
+    end, false)
 
     addEventHandler("onClientGUIClick", chkHit, function()
         ADMINHIT.enabled = guiCheckBoxGetSelected(chkHit)
@@ -3051,6 +3031,7 @@ syncNativeJbkState = function()
     nativeUpdate("loaded", "1")
     nativeUpdate("bot", nativeBool(_STATE))
     nativeUpdate("bhop", nativeBool(Settings.AllowBunnyHop))
+    nativeUpdate("anti_afk", nativeBool(Settings.AntiAFK))
     nativeUpdate("auto_disable", nativeBool(Settings.AutoDisable))
     nativeUpdate("siren", nativeBool(Settings.PlaySiren))
     nativeUpdate("stop_admin", nativeBool(AW.stopOnAdmin))
@@ -3102,6 +3083,9 @@ local function applyNativeCommand(command)
             if bunnyHopTimer then killTimer(bunnyHopTimer); bunnyHopTimer = nil end
             setBotControl("jump", false)
         end
+    elseif key == "anti_afk" then
+        Settings.AntiAFK = commandBool(value)
+        if not Settings.AntiAFK then api.mouse("right", false) end
     elseif key == "auto_disable" then
         Settings.AutoDisable = commandBool(value)
     elseif key == "siren" then
@@ -3171,10 +3155,12 @@ syncNativeJbkState()
 if type(onUnload) == "function" then
     onUnload(function()
         _STATE = false
-        removeEventHandler("onClientPreRender", root, onUpdateStrict)
+        if movementTimer and isTimer(movementTimer) then
+            killTimer(movementTimer)
+        end
         pcall(changeBotState, false)
         releaseBotControls()
-        releasePulseKey()
+        api.mouse("right", false)
         api.alertMonitor(false)
         api.updateState("loaded", "0")
     end)

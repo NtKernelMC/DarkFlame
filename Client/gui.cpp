@@ -4,6 +4,7 @@
 #include "logger.h"
 #include "lua_bridge.h"
 #include "pilot_telemetry.h"
+#include "plow_bot.h"
 #include "resource.h"
 
 #include <MinHook.h>
@@ -907,7 +908,7 @@ void RenderMenu()
 {
     ImGuiIO& io = ImGui::GetIO();
     io.MouseDrawCursor = true;
-    const bool pilotLayout = g_activeTab == 5;
+    const bool pilotLayout = g_activeTab >= 5;
     const float scale = std::min(io.DisplaySize.x / CanvasWidth,
         io.DisplaySize.y / (pilotLayout ? 900.0f : CanvasHeight)) * 0.94f;
     const float height = pilotLayout ? std::max(900.0f, io.DisplaySize.y * 0.97f / scale) : CanvasHeight;
@@ -953,11 +954,11 @@ void RenderMenu()
     const float tabY = pilotLayout ? 235.0f : 421.0f;
     DrawCodeIcon(draw, point(111.0f, tabY + 32.0f), 15.0f * scale,
         IM_COL32(201, 45, 255, 255));
-    const char* tabIds[]{"##tab_lua", "##tab_events", "##tab_threads", "##tab_tram", "##tab_jbk", "##tab_pilot"};
-    const char* tabNames[]{"Lua Injector", "Event Monitor", "Lua Threads", "TramBot", "JBK Bot", "Pilot"};
-    for(int i = 0; i < 6; ++i)
-        DrawTab(tabIds[i], tabNames[i], i, point(135.0f + i * 214.0f, tabY),
-            extent(194.0f, 65.0f), g_activeTab == i, draw, scale);
+    const char* tabIds[]{"##tab_lua", "##tab_events", "##tab_threads", "##tab_tram", "##tab_jbk", "##tab_pilot", "##tab_plow"};
+    const char* tabNames[]{"Lua Injector", "Event Monitor", "Lua Threads", "TramBot", "JBK Bot", "Pilot", "Поливалка"};
+    for(int i = 0; i < 7; ++i)
+        DrawTab(tabIds[i], tabNames[i], i, point(135.0f + i * 188.0f, tabY),
+            extent(180.0f, 65.0f), g_activeTab == i, draw, scale);
     const ImVec2 contentPosition = point(105.0f, pilotLayout ? 312.0f : 495.0f);
     const ImVec2 contentSize = extent(1326.0f,
         pilotLayout ? height - 342.0f : g_activeTab == 0 ? 285.0f : 310.0f);
@@ -990,8 +991,10 @@ void RenderMenu()
         DrawTramBot(contentPosition, contentSize, scale);
     else if(g_activeTab == 4)
         DrawJbkBot(contentPosition, contentSize, scale);
-    else
+    else if(g_activeTab == 5)
         DrawPilotTelemetry(contentPosition, contentSize, scale);
+    else
+        DrawPlowBot(contentPosition, contentSize, scale);
     ImGui::PopFont();
 
     if(g_activeTab == 0 && DrawActionButton("##inject_visual", "Inject",

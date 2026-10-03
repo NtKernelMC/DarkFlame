@@ -2,6 +2,7 @@
 
 #include "gui.h"
 #include "logger.h"
+#include "plow_bot.h"
 #include "lua_bridge.h"
 #include "signature_scanner.h"
 
@@ -131,6 +132,7 @@ void __fastcall HookTextDisplaySetCaption(void* self, void*, const char* caption
     if(!presence)
     {
         PlayTramAlertSignal();
+        PlowQueueAdminCaption(message);
         GuiQueueTramAdminCaption(std::move(message));
     }
     Log::Write(presence ? L"[alert] admin presence caption detected"

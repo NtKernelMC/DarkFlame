@@ -105,7 +105,6 @@ int main()
             CHECK(lua_tointeger(lua, -1) == index);
             lua_settop(lua, 0);
 
-            // Grow/shrink tables in both runtimes; also let each GC free the other's empty tables.
             host_createtable(lua, 0, 0);
             lua_pushinteger(lua, round);
             lua_setfield(lua, -2, "round");

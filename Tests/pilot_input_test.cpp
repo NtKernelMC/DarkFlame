@@ -170,7 +170,7 @@ void CheckModifiers()
     CheckKey("LSHIFT", true, WM_KEYDOWN, VK_SHIFT, 0x2A);
     CheckKey("W", true, WM_KEYDOWN, 'W', 0x11);
     assert(mtaAcceptedW);
-    mtaAcceptedW = false; // Game cleared its control after focus/menu transition.
+    mtaAcceptedW = false;
     CheckKey("W", true, WM_KEYDOWN, 'W', 0x11);
     assert(mtaAcceptedW);
     CheckKey("W", false, WM_KEYUP, 'W', 0x11);

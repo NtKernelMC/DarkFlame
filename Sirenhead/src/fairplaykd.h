@@ -1,33 +1,12 @@
-/**
- * FairplayKD_Connection.h — клиент для драйвера FairplayKD.sys (античит MTA / netc.dll)
- *
- * Чистая реализация из реверс-инжиниринга:
- *
- *   Устройство : \\.\FairplayKD0   (драйвер: \Device\FairplayKD0)
- *   IOCTL      : 0x22E008 (METHOD_BUFFERED)
- *   Magic      : 363 (0x16B) — второй dword каждого пакета
- *
- * Каждый пакет: [command:4][magic:4][payload...][checksum:4]
- * Checksum (sub_19200, драйвер):
- *   v = 0x04651A63;
- *   for (i = 0; i + 4 < total_size; ++i)
- *       v = (data[i] + v) ^ (data[i] << ((i & 7) + 8));
- *
- * Команды драйвера (sub_198C4 dispatch):
- *   1     — handshake, возвращает 363
- *   121   — вернуть PE imagebase ntoskrnl (MZ scan вниз по страницам)
- *   122   — MmGetSystemRoutineAddress (resolve ядерного импорта)
- *   123   — memcmp-поиск подстроки (whitelist blob)
- *   124   — write/validate (sub_1B538)
- *   125   — читать глобальный blob по частям (word_20118 bytes/запрос)
- *   126   — запросить/получить сгенерированный blob (96 байт)
- *   128..131 — checksum-only / counters
- *   132   — process hash (sub_19270)
- *   133   — validate memory ranges (ZwUnmapViewOfSection по диапазону)
- *   134..143 — дополнительные операции
- *
- * Команды клиента netc.dll (не попадают в driver switch — другая сторона):
- *   151, 152, 164 — пакеты netc-протокола (sub_101B3B60 / sub_101AE980)
+/*
+ * FairplayKD.sys: \\.\FairplayKD0, IOCTL 0x22E008 (METHOD_BUFFERED), magic 363 (0x16B) = второй dword
+ * Пакет: [command:4][magic:4][payload...][checksum:4]
+ * Checksum (sub_19200): v = 0x04651A63; for (i = 0; i + 4 < size; ++i) v = (d[i] + v) ^ (d[i] << ((i & 7) + 8));
+ * Команды (sub_198C4): 1 handshake -> 363; 121 imagebase ntoskrnl; 122 MmGetSystemRoutineAddress;
+ *   123 memcmp-поиск (whitelist blob); 124 write/validate (sub_1B538); 125 blob по word_20118 байт;
+ *   126 blob 96 байт; 128..131 checksum/counters; 132 process hash (sub_19270);
+ *   133 validate ranges (ZwUnmapViewOfSection); 134..143 прочее
+ * netc.dll (не драйвер): 151, 152, 164 (sub_101B3B60 / sub_101AE980)
  */
 
 #pragma once
@@ -42,25 +21,16 @@
 
 namespace fpkd {
 
-// ============================================================================
-// Константы протокола
-// ============================================================================
-
 inline constexpr DWORD     kIoctlCode      = 0x22E008;
-inline constexpr uint32_t  kMagic          = 363;      // 0x16B
+inline constexpr uint32_t  kMagic          = 363;
 inline constexpr uint32_t  kChecksumSeed   = 0x04651A63;
 inline constexpr wchar_t   kDevicePath[]   = L"\\\\.\\FairplayKD0";
 
-// Путь к игре (подтверждён существованием)
 inline constexpr wchar_t   kGtaExePath[]   = L"C:\\Province Games\\bin\\gta_sa.exe";
 
-// Образ игры (из IDA gta_sa-us-hoodlum)
+// IDA gta_sa-us-hoodlum
 inline constexpr uint32_t  kGtaImageBase   = 0x00AC0000;
 inline constexpr uint32_t  kGtaImageSize   = 0x01177000;
-
-// ============================================================================
-// Структуры пакетов
-// ============================================================================
 
 #pragma pack(push, 1)
 
@@ -69,39 +39,34 @@ struct FpkdHeader {
     uint32_t magic;
 };
 
-// Общий ответ на простую команду: драйвер возвращает magic
 struct FpkdSimpleResponse {
     uint32_t value;
 };
 
-// case 121 — ответ драйвера
+// case 121
 struct FpkdModuleInfo {
     uint64_t exportAddr;   // base + export dir
     uint64_t moduleSize;   // SizeOfImage
 };
 
-// case 126 — 96-байтовый блоб (заполняется драйвером)
+// case 126: драйвер пишет 96 байт, структура 100
 struct FpkdBlob {
-    uint32_t magic0;           // [+0]  = 363 после первого ответа
-    uint16_t count;            // [+4]  счётчик (word_20118)
-    uint16_t flags;            // [+6]  (word_2011A)
+    uint32_t magic0;           // [+0]  363 после первого ответа
+    uint16_t count;            // [+4]  word_20118
+    uint16_t flags;            // [+6]  word_2011A
     uint8_t  reserved0[8];     // [+8]
     uint8_t  enabled;          // [+16] byte_22FF5
     uint8_t  reserved1[15];    // [+17]
-    uint64_t selfPtr;          // [+32] указатель (sub_13634 в драйвере)
-    uint32_t randomState;      // [+40] из sub_11898(6)
-    uint64_t randomA[3];       // [+44] из sub_118C8(6, i)
-    uint16_t randomB0;         // [+68] из sub_11898(5)
+    uint64_t selfPtr;          // [+32] sub_13634
+    uint32_t randomState;      // [+40] sub_11898(6)
+    uint64_t randomA[3];       // [+44] sub_118C8(6, i)
+    uint16_t randomB0;         // [+68] sub_11898(5)
     uint8_t  randomPad[6];     // [+70]
     uint64_t randomB[3];       // [+76]
-}; // всего 100 → драйвер кладёт 96 байт, храним с запасом
+};
 static_assert(sizeof(FpkdBlob) >= 96, "blob must hold 96 bytes");
 
 #pragma pack(pop)
-
-// ============================================================================
-// Checksum — sub_19200
-// ============================================================================
 
 inline uint32_t ComputeChecksum(const uint8_t* data, size_t totalSize)
 {
@@ -112,26 +77,11 @@ inline uint32_t ComputeChecksum(const uint8_t* data, size_t totalSize)
     return v;
 }
 
-// Пишет checksum в последние 4 байта пакета
 inline void FinalizePacket(uint8_t* packet, size_t totalSize)
 {
     *reinterpret_cast<uint32_t*>(packet + totalSize - 4) =
         ComputeChecksum(packet, totalSize);
 }
-
-// ============================================================================
-// Маппер gta_sa.exe — читает игровые байты БЕЗ запуска игры
-//
-// Работает через CreateFileMapping: мапит файл в память, парсит PE-заголовки,
-// и отдаёт байты по "игровому адресу" (как в IDA: 0xAC0000 + RVA).
-//
-// Использование:
-//   GtaFileMapper mapper;
-//   if (mapper.Open(kGtaExePath)) {
-//       std::vector<uint8_t> bytes;
-//       mapper.ReadBytes(0xAC1234, 256, bytes);
-//   }
-// ============================================================================
 
 class GtaFileMapper {
 public:
@@ -159,7 +109,6 @@ public:
         m_base = static_cast<const uint8_t*>(MapViewOfFile(m_map, FILE_MAP_READ, 0, 0, 0));
         if (!m_base) { m_lastError = GetLastError(); Close(); return false; }
 
-        // --- парсим PE ---
         auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(m_base);
         if (dos->e_magic != IMAGE_DOS_SIGNATURE) { m_lastError = ERROR_BAD_EXE_FORMAT; Close(); return false; }
 
@@ -194,7 +143,6 @@ public:
     uint32_t ImageBase() const { return m_imageBase; }
     uint32_t SizeOfImage() const { return m_sizeOfImage; }
 
-    // Конвертирует игровой адрес (ImageBase + RVA) в file offset
     bool RvaToFileOffset(uint32_t gameAddress, uint32_t* fileOffset) const
     {
         if (!m_base) return false;
@@ -216,7 +164,6 @@ public:
         return false;
     }
 
-    // Читает байты по игровому адресу
     bool ReadBytes(uint32_t gameAddress, size_t size, std::vector<uint8_t>& out) const
     {
         out.clear();
@@ -259,10 +206,6 @@ private:
     uint32_t m_sizeOfImage = kGtaImageSize;
 };
 
-// ============================================================================
-// Клиент драйвера
-// ============================================================================
-
 class FairplayKd {
 public:
     FairplayKd() = default;
@@ -295,7 +238,6 @@ public:
     bool IsOpen() const { return m_device != INVALID_HANDLE_VALUE; }
     DWORD GetLastError() const { return m_lastError; }
 
-    // Базовое I/O. payloadSize включает 8-байтовый header + payload + 4 checksum.
     bool Ioctl(const void* inData, DWORD inSize,
                void* outData, DWORD outSize,
                DWORD* bytesReturned = nullptr)
@@ -312,7 +254,6 @@ public:
         return true;
     }
 
-    // ---- case 1: handshake -----------------------------------------------
     bool Handshake()
     {
         uint8_t req[12] = {};
@@ -325,7 +266,6 @@ public:
         return resp.value == kMagic;
     }
 
-    // ---- case 121: ntoskrnl info -----------------------------------------
     bool GetNtoskrnlInfo(FpkdModuleInfo* out)
     {
         uint8_t req[16] = {};
@@ -338,7 +278,6 @@ public:
         return Ioctl(req, sizeof(req), out, sizeof(*out));
     }
 
-    // ---- case 126: получить блоб ------------------------------------------
     bool QueryBlob(FpkdBlob* out)
     {
         uint8_t req[12] = {};
@@ -352,8 +291,7 @@ public:
         return br >= 96;
     }
 
-    // ---- case 133: валидация диапазонов адресов игры ---------------------
-    // Драйвер требует: a1[2], a1[3] — [start, end) выровнены по 4, <= 0xFDE8
+    // драйвер: a1[2], a1[3] = [start, end) выровнены по 4, <= 0xFDE8
     bool ValidateMemoryRange(uint32_t start, uint32_t end)
     {
         if (end < start) return false;
@@ -370,7 +308,7 @@ public:
         return true;
     }
 
-    // ---- зачистка: close handle → драйвер снимает callback-и --------------
+    // close handle -> драйвер снимает callback-и
     bool Unregister()
     {
         Close();
@@ -382,10 +320,6 @@ private:
     DWORD m_lastError = 0;
 };
 
-// ============================================================================
-// Утилиты
-// ============================================================================
-
 inline std::string LastErrorString(DWORD code)
 {
     char buf[512];
@@ -395,4 +329,4 @@ inline std::string LastErrorString(DWORD code)
     return buf;
 }
 
-} // namespace fpkd
+}

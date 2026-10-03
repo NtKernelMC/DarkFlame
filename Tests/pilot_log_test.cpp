@@ -231,7 +231,6 @@ int main()
     assert(audioFuture.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready);
     audioProducer.join();
     assert(update.result);
-    // Supersede a slow ON open; only the most recent OFF may play afterwards.
     update.value = "off";
     callbacks.at("dfPilotUpdate")(&update);
     assert(update.result);
@@ -316,7 +315,6 @@ int main()
         WaitForDrain();
     }
 
-    // A periodic flush must finish a quiet tail without further Lua submissions.
     lua.text = "{\"type\":\"periodic_flush\"}\n";
     lua.flush = false;
     callbacks.at("dfPilotLog")(&lua);

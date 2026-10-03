@@ -1,5 +1,6 @@
 #include "logger.h"
 #include "pilot_telemetry.h"
+#include "plow_bot.h"
 #include "../Shared/runtime_log.h"
 
 #include <cstdio>
@@ -37,6 +38,7 @@ void Log::Initialize(HMODULE)
     static std::once_flag once;
     std::call_once(once, &ClearTramLog);
     InitializePilotTelemetry();
+    InitializePlowBot();
 }
 
 void Log::Write(std::wstring_view text)

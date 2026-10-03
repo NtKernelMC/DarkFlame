@@ -30,7 +30,7 @@ class TimingTests(unittest.TestCase):
                 self.assertIsNone(self.c.detail['timing_resync_reason'])
 
     def test_stall_recovery_keeps_vehicle_world_damage_position_and_attitude_checks(self):
-        for change in ({'driver': False}, {'vehicle': 'other'}, {'interior': 5},
+        for change in ({'driver': False}, {'vehicle': 'other'}, {'dimension': 5},
                        {'health': 100}, {'in_water': True}, {'pitch_deg': float('nan')},
                        {'position_m': [50000, 0, 1000]}, {'roll_deg': 80}):
             with self.subTest(change=change):

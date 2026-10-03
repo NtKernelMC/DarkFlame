@@ -64,6 +64,7 @@
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="logger.cpp" />
     <ClCompile Include="pilot_telemetry.cpp" />
+    <ClCompile Include="plow_bot.cpp" />
     <ClCompile Include="lua_args_hook.cpp" />
     <ClCompile Include="lua_bridge.cpp" />
     <ClCompile Include="memory_module_dumper.cpp" />
@@ -148,6 +149,7 @@
     <ClInclude Include="gui.h" />
     <ClInclude Include="logger.h" />
     <ClInclude Include="pilot_telemetry.h" />
+    <ClInclude Include="plow_bot.h" />
     <ClInclude Include="lua_args_hook.h" />
     <ClInclude Include="lua_bridge.h" />
     <ClInclude Include="hook_utils.h" />

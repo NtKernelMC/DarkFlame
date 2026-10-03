@@ -164,7 +164,7 @@ class MathTests(unittest.TestCase):
         self.assertFalse(self.c.enabled)
 
     def test_invalid_nav_pause_world_vehicle_and_tick_wrap(self):
-        for change in ({'vehicle': None}, {'interior': 3}, {'pitch_deg': float('nan')}, {'position_m': [9999, 0, 0]}):
+        for change in ({'vehicle': None}, {'dimension': 3}, {'pitch_deg': float('nan')}, {'position_m': [9999, 0, 0]}):
             self.setUp()
             d = observation()
             self.start(d)
@@ -326,24 +326,6 @@ class AdapterTests(unittest.TestCase):
             hit={kind='vehicle',valid=true,parent=root,position={0,0,6.2}}
             event('onClientVehicleCollision',plane,hit,1,0,0,0,0,0,1,0,577)
         ''')
-        self.assertEqual(self.lua.eval('alertCalls'), 1)
-
-    def test_dimension_change_sounds_once_and_keeps_autopilot_running(self):
-        self.arm()
-        self.run_lua('''
-            localPlayer.dimension=7
-            plane.dimension=7
-            m1.dimension=7
-            step(41)
-        ''')
-        self.assertEqual(self.lua.eval('alertCalls'), 1)
-        self.assertEqual(self.lua.globals().ui['autopilot'], '1')
-        self.assertEqual(self.lua.globals().ui['recording'], '1')
-        self.assertEqual(self.records('autopilot_stop'), [])
-        alert = self.records('safety_alert')[-1]['data']
-        self.assertEqual(alert['kind'], 'dimension_change')
-        self.assertTrue(alert['context']['autopilot_continues'])
-        self.run_lua('step(50)')
         self.assertEqual(self.lua.eval('alertCalls'), 1)
 
     def test_nearby_player_raises_safety_siren(self):

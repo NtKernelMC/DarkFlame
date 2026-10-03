@@ -521,11 +521,20 @@ void DrawPilotTelemetry(ImVec2 position, ImVec2 size, float scale)
     bool autopilotTelemetry = state["autopilot_telemetry"] == "1";
     bool autopilotHud = state["autopilot_hud"] == "1";
     at(32, 188);
-    if(ImGui::Checkbox("Автономность (BETA)", &autonomy)) Queue(autonomy ? "autopilot_autonomy:1" : "autopilot_autonomy:0");
+    if(ImGui::Checkbox("Автономность", &autonomy)) Queue(autonomy ? "autopilot_autonomy:1" : "autopilot_autonomy:0");
     at(32, 215);
     if(ImGui::Checkbox("Чёрный Ящик", &autopilotTelemetry)) Queue(autopilotTelemetry ? "autopilot_telemetry:1" : "autopilot_telemetry:0");
+    bool aggressive = state["autopilot_aggressive"] == "1";
+    at(205, 215);
+    if(ImGui::Checkbox("Агрессив", &aggressive)) Queue(aggressive ? "autopilot_aggressive:1" : "autopilot_aggressive:0");
     at(32, 242);
     if(ImGui::Checkbox("Отладочный HUD", &autopilotHud)) Queue(autopilotHud ? "autopilot_hud:1" : "autopilot_hud:0");
+    const std::string hudMode = state["hud_mode"];
+    int hudModeIndex = hudMode == "left" ? 1 : hudMode == "right" ? 2 : 0;
+    at(205, 240);
+    ImGui::SetNextItemWidth(118);
+    if(ImGui::Combo("##pilot_hud_mode", &hudModeIndex, "Полный HUD\0Высота слева\0Высота справа\0"))
+        Queue(hudModeIndex == 1 ? "hud_mode:left" : hudModeIndex == 2 ? "hud_mode:right" : "hud_mode:full");
     ImGui::EndDisabled();
 
     const char* metricNames[]{"СКОРОСТЬ", "КУРС", "ВЫСОТА", "ВЕРТ. СКОРОСТЬ"};

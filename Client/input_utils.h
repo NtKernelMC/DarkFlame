@@ -86,7 +86,6 @@ inline HWND ProcessWindow()
 
 inline HWND GameWindow()
 {
-    // Title queries can re-enter the game's window procedure from a Lua callback.
     HWND window = OwnedRootWindow(g_gameWindow.load(std::memory_order_acquire));
     return window ? window : ProcessWindow();
 }
@@ -128,7 +127,6 @@ inline KeyPostResult PostKey(HWND window, int virtualKey, bool pressed)
         || virtualKey == VK_RIGHT || virtualKey == VK_DIVIDE;
     if(extended)
         parameter |= static_cast<LPARAM>(1u << 24);
-    // MTA discards autorepeat. Every explicit down reasserts the game control.
     if(!pressed)
         parameter |= static_cast<LPARAM>(1u << 30);
     if(!pressed)

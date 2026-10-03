@@ -210,16 +210,6 @@ local ROUTES = {
     },
 }
 
--- TrainTrack values recovered from province_tram/tram_data-shared.lua.
-local TRACK_ROUTES = {
-    [2] = "mirka3",
-    [8] = "mirka8",
-    [12] = "priva2",
-    [22] = "neva100",
-    [31] = "priva8",
-    [32] = "priva7",
-}
-
 local function profile(values)
     local result = {}
     for index, speed in ipairs(SPEEDS) do
@@ -259,7 +249,6 @@ local markerCol
 local markerDebug
 local markerEntered = false
 local botEnabled = false
-local botDimension
 local ignoreTraffic = false
 local debugEnabled = false
 local sirenEnabled = true
@@ -434,33 +423,6 @@ local function determineRoute(depot, line)
     else
         notify("Неизвестный маршрут: " .. tostring(depot) .. "/" .. tostring(line), true)
     end
-end
-
-local function determineRouteFromTram(attempt)
-    attempt = attempt or 1
-    local vehicle = getPedOccupiedVehicle(localPlayer)
-    local track = vehicle and tonumber(getElementData(vehicle, "TrainTrack"))
-    local key = track and TRACK_ROUTES[track]
-    if key then
-        debugOutput(string.format("tram:onClientSetCurrentLap: TrainTrack=%s, route=%s",
-            tostring(track), key))
-        if routeKey ~= key or not botEnabled then
-            selectRoute(key, true)
-            money = "0"
-        else
-            debugOutput("Текущий маршрут подтверждён без сброса прогресса")
-        end
-        return
-    end
-    if attempt < 9 then
-        schedule(determineRouteFromTram, 250, 1, attempt + 1)
-        return
-    end
-    debugOutput("tram:onClientSetCurrentLap не определил маршрут: TrainTrack=" .. tostring(track))
-end
-
-local function onTramLapChanged()
-    determineRouteFromTram(1)
 end
 
 -- Braking profile selection and interpolation.
@@ -1250,7 +1212,6 @@ stopBot = function(reason)
         .. ", state=" .. tostring(botState) .. ", target=" .. pointText(currentPoint))
     if wasEnabled then
         botEnabled = false
-        botDimension = nil
         removeHandler("onClientRender", root, onBrakeRender)
     end
     botState = "IDLE"
@@ -1292,7 +1253,6 @@ local function startBot()
         return false
     end
     botEnabled = true
-    botDimension = getElementDimension(localPlayer)
     botState = "MOVING"
     stopFrameCount = 0
     lastBotState = nil
@@ -1304,16 +1264,6 @@ local function startBot()
         updateNativeMenu()
     end
     return true
-end
-
-local function checkBotDimension()
-    if not botEnabled or botDimension == nil then return end
-    local current = getElementDimension(localPlayer)
-    if current == botDimension then return end
-    local previous = botDimension
-    if sirenEnabled then api.alert() end
-    stopBot(string.format("Dimension персонажа изменился: %s -> %s",
-        tostring(previous), tostring(current)))
 end
 
 local function onForceStop()
@@ -1605,7 +1555,6 @@ local function cleanup()
     end
     cleaning = true
     botEnabled = false
-    botDimension = nil
     calibration.active = false
     releaseKeys()
     if eventCatcher then
@@ -1636,9 +1585,7 @@ math.randomseed(getTickCount())
 
 api.addEvent("Tram:AskToContinue", true)
 api.addEvent("province:sendNotification", true)
-api.addEvent("tram:onClientSetCurrentLap", true)
 addHandler("Tram:AskToContinue", root, tramContinue)
-addHandler("tram:onClientSetCurrentLap", root, onTramLapChanged)
 addHandler("province:sendNotification", root, onNotification)
 addHandler("onClientVehicleCollision", root, onVehicleCollision)
 addHandler("onClientChatMessage", root, onChatMessage)
@@ -1654,7 +1601,6 @@ eventCatcher = api.catchServerEvent("Tram:onJobAccepted", 1, determineRoute)
 
 bindKey("space", "down", onForceStop)
 schedule(pollNativeMenu, 100, 0)
-schedule(checkBotDimension, 2000, 0)
 pushNativeState()
 
 if type(onUnload) == "function" then
