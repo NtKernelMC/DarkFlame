@@ -1,4 +1,4 @@
--- PlowBot 2.11.2 — бот дорожной службы (поливомоечная машина, province_snowPlow).
+-- PlowBot 2.14.0 — бот дорожной службы (поливомоечная машина, province_snowPlow).
 -- Скрипт внедряется DarkFlame прямо в VM ресурса province_snowPlow, поэтому видит его
 -- глобалы: tRoutesPoints / tDist / tWaterCapacity / IDEAL_SPEED / CURRENT_ROUTE_ID /
 -- CURRENT_POSITION_ID / getJobVehicle / isActiveWaterSpray / getVehicleSpeed.
@@ -6,7 +6,7 @@
 -- В панель и отчёты уходит скорость спидометра сервера: внутренняя * 0.702.
 
 -- BEGIN EMBEDDED PLOW CONTROLLER
-local VERSION = "2.11.2"
+local VERSION = "2.14.0"
 -- Спидометр сервера показывает ровно то, что отдаёт getVehicleSpeed ресурса.
 -- Проверено на 4604 замерах: getVehicleSpeed / (путь по координатам) = 0.698, то есть
 -- это НЕ километры в час движка, а собственные единицы province — и именно их видит
@@ -75,12 +75,42 @@ local function speedForRadius(radius)
     end
     return TURN_TABLE[#TURN_TABLE][1]
 end
--- Частичный руль: кривизна растёт примерно как квадрат отклонения
--- (замер: руль 0.3 -> радиус 132 м, 0.5 -> 40 м, 0.9 -> 14 м).
+-- Частичный руль: доля полной кривизны (1 / minRadius) по положению руля. Снято с заезда бота
+-- по маршруту 4 (Мирный, 03.10.2026): 1550 замеров на 8–25 м/с, руль с запаздыванием 0.2 с.
+-- Прежняя формула «доля = руль²» занижала кривизну частичного руля в 1.7–2.7 раза: бот давал
+-- руль под дугу 60 м, а машина шла по 25 м, и pure pursuit держал её на 1.5–3 м внутри
+-- каждого поворота — в столбах и бордюре (13 ударов за заезд). Полный руль формула описывала
+-- верно (замер 16.1 м против 16.9 м), поэтому TURN_TABLE прежняя. Пары {руль, доля}.
+-- Второй заезд (2.13.1, 2600 замеров) подтвердил таблицу до руля 0.4, а выше уточнил: 0.47 → 0.63.
+local STEER_SHARE = {{0, 0}, {0.11, 0.027}, {0.16, 0.066}, {0.225, 0.137}, {0.33, 0.294},
+    {0.40, 0.446}, {0.465, 0.61}, {0.55, 0.73}, {0.66, 0.79}, {1, 1}}
+-- Таблица верна только на ходу. На малой скорости доля — ровно руль² (как в прежней формуле):
+-- замер 140 точек на 3–5 м/с, руль 0.32 → 0.11, 0.66 → 0.45. Таблица там обещала вдвое больше,
+-- и на выезде с СТО (маршрут 5, 2.13.2) бот давал руль 0.7 вместо полного: дуга 15 м вместо 7,
+-- машина ушла с дороги. До 4 м/с — руль², к 14 м/с — плавно таблица (5–8 и 8–12 м/с легли между).
+local function steerShare(steer, ms)
+    local a = math.min(1, math.abs(steer))
+    local t = 1
+    for i = 2, #STEER_SHARE do
+        local s1, f1 = STEER_SHARE[i][1], STEER_SHARE[i][2]
+        if a <= s1 then
+            local s0, f0 = STEER_SHARE[i - 1][1], STEER_SHARE[i - 1][2]
+            t = f0 + (f1 - f0) * (a - s0) / (s1 - s0)
+            break
+        end
+    end
+    local w = math.max(0, math.min(1, (math.abs(ms) - 4) / 10))
+    return (1 - w) * a * a + w * t
+end
 local function steerForCurvature(curvature, ms)
     local full = 1 / minRadius(ms)
     local share = math.min(1, math.abs(curvature) / full)
-    return (curvature >= 0 and 1 or -1) * math.sqrt(share)
+    local lo, hi = 0, 1
+    for _ = 1, 16 do
+        local mid = (lo + hi) / 2
+        if steerShare(mid, ms) < share then lo = mid else hi = mid end
+    end
+    return (curvature >= 0 and 1 or -1) * hi
 end
 
 local Controller = {}
@@ -787,6 +817,10 @@ local state = {
     owned = false, trips = 0, frame = 0, buffer = {}, bufferBytes = 0,
     -- Ограничитель задаётся в единицах спидометра сервера, внутрь идёт пересчёт.
     speedLimitSpeedo = 50, speedLimit = 50, debug = false,
+    -- Поворотники и остановка при ДТП включены сразу, выключаются в панели.
+    signals = true, dtpStop = true,
+    -- Запись телеметрии при запуске бота — по галочке «Автозапись» (её хранит DLL).
+    autoRecord = true,
 }
 local controller = Controller.new()
 
@@ -1032,6 +1066,200 @@ local WAYPOINTS = {
     {2267.22, 2416.86, 210.3, 6, 1},
 }
 
+-- === города: СТО, ворота депо и финиш ===
+-- Город боту знать не нужно: машину всегда выдают у СТО, — чьё СТО ближе, тот и город (и для
+-- маршрута, и для метки). Точки города — не метки: в цепочке меток они не участвуют, номеров у
+-- них нет. Любой маршрут города выезжает из депо через ворота (gate), после последней точки
+-- сервера возвращается через них же и встаёт на финише (finish). У Мирного это были метки #19 и
+-- #20 «на любом маршруте», и они путали бота: финишем цепочки становилась последняя по списку.
+-- Здесь — значения по умолчанию. Поправленные в эдиторе (или поставленные кнопками «Ворота здесь»
+-- и «Финиш здесь») хранятся в PlowMarks.txt строками «--!город» и важнее этих.
+-- Поля точки: x, y, курс (как ехал водитель, ставя её), радиус зоны. СТО — первое место выдачи
+-- машины из ресурса (tCitySpawnPos). Выезд (exit) и въезд (entry) — линия водителя от места выдачи
+-- до S1 и от ворот до финиша: S1 у всех маршрутов города одна, и путь со стоянки у них общий.
+local City = {
+    list = {
+        {name = "Приволжск", base = {2237.61, 2451.32}},
+        -- Мирный, 03.10.2026: ворота — бывшая #20, финиш — бывшая #19; выезд и въезд — из ручного
+        -- проезда маршрута 4 (Дуглас–Пекер 0.3 м).
+        {name = "Мирный", base = {14.71, 506.36},
+            gate = {16.24, 434.07, 184.2, 3.0},
+            finish = {15.90, 551.19, 358.9, 4.5},
+            exit = {{14.68, 506.36}, {12.37, 504.27}, {11.22, 501.42}, {11.12, 484.04},
+                {13.12, 459.96}, {15.87, 434.53}, {15.72, 431.41}, {14.45, 427.40}, {11.78, 423.75},
+                {7.89, 421.00}, {3.67, 419.57}},
+            entry = {{17.17, 431.76}, {16.27, 440.56}, {15.80, 456.11}, {15.51, 486.70},
+                {15.35, 503.10}, {15.96, 533.39}, {16.31, 551.04}}},
+        {name = "Невский", base = {2107.35, -2830.59}},
+    },
+    ROLES = {"gate", "finish"},
+    LABEL = {gate = "ворота", finish = "финиш"},
+    REACH = 1500,  -- первая точка маршрута дальше этого от ближайшего СТО — города не знаем
+    SAME = 2.0,    -- метка без маршрута ближе этого к точке города — это она, в метки не берём
+}
+
+-- Чьё СТО ближе к точке (x, y): город, его номер и расстояние до СТО.
+function City.depot(x, y)
+    local best, bestIndex, bestDistance
+    for index, city in ipairs(City.list) do
+        local d = (x - city.base[1]) ^ 2 + (y - city.base[2]) ^ 2
+        if not bestDistance or d < bestDistance then best, bestIndex, bestDistance = city, index, d end
+    end
+    return best, bestIndex, bestDistance and math.sqrt(bestDistance)
+end
+
+-- Город маршрута: по его первой точке — она у СТО, — если она не дальше REACH от него.
+function City.of(first)
+    if not first then return nil end
+    local city, _, d = City.depot(first.x, first.y)
+    return d and d <= City.REACH and city or nil
+end
+
+-- Сеть маршрутов города из ресурса: маршрут — к городу по первой точке, его точки — в сеть.
+-- Строится один раз, когда ресурс отдал tRoutesPoints.
+function City.network()
+    if City.net then return City.net end
+    local all = _G.tRoutesPoints
+    if type(all) ~= "table" then return nil end
+    local net = {routes = {}, points = {}}
+    for id, points in pairs(all) do
+        if type(id) == "number" and type(points) == "table" then
+            local list = {}
+            for _, entry in ipairs(points) do
+                local v = type(entry) == "table" and entry[1]
+                local ok, x, y = pcall(function() return v.x, v.y end)
+                if ok and finite(x) and finite(y) then list[#list + 1] = {x, y} end
+            end
+            if #list > 0 then
+                local _, cityIndex = City.depot(list[1][1], list[1][2])
+                net.routes[id] = cityIndex
+                net.points[cityIndex] = net.points[cityIndex] or {}
+                for _, p in ipairs(list) do table.insert(net.points[cityIndex], p) end
+            end
+        end
+    end
+    City.net = net
+    return net
+end
+
+-- Город точки (x, y) — метки, светофора: чья сеть маршрутов ближе. Маршрут 1 Приволжска уходит
+-- на 2 км на запад, и его метки там ближе к СТО Мирного, чем к своему. Без данных ресурса — по СТО.
+function City.near(x, y)
+    local net = City.network()
+    if not net then return City.depot(x, y) end
+    local best, bestIndex
+    for index in ipairs(City.list) do
+        for _, p in ipairs(net.points[index] or {}) do
+            local d = (x - p[1]) ^ 2 + (y - p[2]) ^ 2
+            if not best or d < best then best, bestIndex = d, index end
+        end
+    end
+    if not bestIndex then return City.depot(x, y) end
+    return City.list[bestIndex], bestIndex, math.sqrt(best)
+end
+
+-- Город метки: привязана к маршруту — город маршрута, иначе — по месту.
+function City.ofMark(point)
+    local net = City.network()
+    local index = net and point[5] and net.routes[point[5]]
+    if index then return City.list[index], index end
+    local city, cityIndex = City.near(point[1], point[2])
+    return city, cityIndex
+end
+
+-- Точка (x, y) стоит на точке какого-нибудь города: отдаёт город и роль точки.
+function City.at(x, y)
+    for _, city in ipairs(City.list) do
+        for _, role in ipairs(City.ROLES) do
+            local p = city[role]
+            if p and math.sqrt((x - p[1]) ^ 2 + (y - p[2]) ^ 2) <= City.SAME then return city, role end
+        end
+    end
+    return nil
+end
+
+-- Маршруты города по данным ресурса (чья первая точка у его СТО). Отдаёт номера по порядку.
+function City.routes(index)
+    local out = {}
+    local net = City.network()
+    for id, cityIndex in pairs(net and net.routes or {}) do
+        if cityIndex == index then out[#out + 1] = id end
+    end
+    table.sort(out)
+    return out
+end
+
+-- Поправленные точки города из PlowMarks.txt: «--!город Мирный ворота x, y, курс, зона».
+function City.parse(text)
+    for name, label, x, y, h, r in text:gmatch(
+        "%-%-!город%s+(%S+)%s+(%S+)%s+([-%d%.]+),%s*([-%d%.]+),%s*([-%d%.]+),%s*([-%d%.]+)") do
+        x, y, h, r = tonumber(x), tonumber(y), tonumber(h), tonumber(r)
+        for _, city in ipairs(City.list) do
+            for _, role in ipairs(City.ROLES) do
+                if city.name == name and City.LABEL[role] == label and finite(x) and finite(y) then
+                    city[role] = {x, y, finite(h) and h or 0, finite(r) and r or 3}
+                end
+            end
+        end
+    end
+end
+
+function City.serialize()
+    local lines = {}
+    for _, city in ipairs(City.list) do
+        for _, role in ipairs(City.ROLES) do
+            local p = city[role]
+            if p then
+                lines[#lines + 1] = string.format("--!город %s %s %.2f, %.2f, %.1f, %.2f", city.name,
+                    City.LABEL[role], p[1], p[2], p[3] or 0, p[4] or 3)
+            end
+        end
+    end
+    if #lines == 0 then return "" end
+    table.insert(lines, 1, "-- Точки городов: ворота депо и финиш. Не метки — правятся в эдиторе, раздел города.")
+    return table.concat(lines, "\n") .. "\n"
+end
+
+-- === удары: бот учится на своих касаниях ===
+-- Место, где бот задел столб, бордюр или стену, запоминается насовсем — в PlowMarks.txt
+-- строками «--!удар» (парсер меток их не видит, это комментарий), — и на следующих проездах бот
+-- проходит его с запасом: +0.5 м за каждый удар, но не больше 1.5 м. Только сдвиг в полосе, не
+-- торможение: путь там проходим, водитель проехал, просто впритык. Точка — место касания,
+-- которое отдаёт игра, то есть край самой помехи.
+local Bumps = {list = {}, SAME = 1.5, STEP = 0.5, MOST = 1.5}
+
+function Bumps.learn(x, y)
+    for _, b in ipairs(Bumps.list) do
+        if (b[1] - x) ^ 2 + (b[2] - y) ^ 2 < Bumps.SAME * Bumps.SAME then
+            b[3] = b[3] + 1
+            return b
+        end
+    end
+    local b = {x, y, 1}
+    Bumps.list[#Bumps.list + 1] = b
+    return b
+end
+
+function Bumps.margin(b) return math.min(Bumps.MOST, Bumps.STEP * b[3]) end
+
+function Bumps.parse(text)
+    local list = {}
+    for x, y, hits in text:gmatch("%-%-!удар%s+([-%d%.]+),%s*([-%d%.]+),%s*(%d+)") do
+        x, y, hits = tonumber(x), tonumber(y), tonumber(hits)
+        if finite(x) and finite(y) and finite(hits) then list[#list + 1] = {x, y, hits} end
+    end
+    return list
+end
+
+function Bumps.serialize()
+    if #Bumps.list == 0 then return "" end
+    local lines = {"-- Удары бота: x, y, сколько раз. Здесь бот проходит с запасом; удалишь строку — забудет."}
+    for _, b in ipairs(Bumps.list) do
+        lines[#lines + 1] = string.format("--!удар %.2f, %.2f, %d", b[1], b[2], b[3])
+    end
+    return table.concat(lines, "\n") .. "\n"
+end
+
 local function waypointNear(position, heading, radius)
     if not position then return nil end
     local best, bestDistance
@@ -1179,7 +1407,7 @@ local function marksSerialize()
             point[1], point[2], point[3] or 0, point[4] or K.WAYPOINT_MID,
             point[5] and tostring(point[5]) or "nil")
     end
-    return table.concat(lines, "\n") .. "\n"
+    return table.concat(lines, "\n") .. "\n" .. City.serialize() .. Bumps.serialize()
 end
 
 local function marksParse(text)
@@ -1238,9 +1466,23 @@ local function marksLoad()
         emit("marks_rejected", {bad = bad, good = #list}, true)
         return
     end
-    WAYPOINTS = list
+    -- Точки города (выезд, финиш) — не метки. Остались в файле строкой без маршрута — в метки
+    -- их не берём; первая же правка перепишет файл уже без них.
+    City.parse(text)
+    local kept, cityPoints = {}, 0
+    for _, point in ipairs(list) do
+        if not point[5] and City.at(point[1], point[2]) then
+            cityPoints = cityPoints + 1
+        else
+            kept[#kept + 1] = point
+        end
+    end
+    WAYPOINTS = kept
+    Bumps.list = Bumps.parse(text)
     state.planDirty = true
-    state.marksFile = string.format("Метки из PlowMarks.txt: %d", #list)
+    state.marksFile = string.format("Метки из PlowMarks.txt: %d", #kept)
+        .. (cityPoints > 0 and string.format(" (ещё %d — точки города, не метки)", cityPoints) or "")
+        .. (#Bumps.list > 0 and string.format(", выученных ударов: %d", #Bumps.list) or "")
 end
 
 local function waypointDump()
@@ -1267,16 +1509,22 @@ local function waypointSave(position, heading, radius)
         return
     end
     radius = clamp(finite(radius) and radius or K.WAYPOINT_MID, K.WAYPOINT_MIN, K.WAYPOINT_MAX)
+    -- Маршрут метки — текущий, а после закрытия рейса — последний: метку у места сдачи
+    -- ставят уже после финиша, и до 2.12.0 она оставалась без маршрута (#18 у 2.11.3).
+    -- Маршрут, выбранный в «Создать маршрут», главнее маршрута рейса.
+    local route = state.workRoute or routeId() or state.lastRoute
     local index = waypointNear(position, heading, K.WAYPOINT_SAME)
     if index then
         WAYPOINTS[index] = {position.x, position.y, finite(heading) and heading or 0, radius,
-            routeId()}
+            route}
     else
-        local point = {position.x, position.y, finite(heading) and heading or 0, radius, routeId()}
+        local point = {position.x, position.y, finite(heading) and heading or 0, radius, route}
         index = placeInOrder and placeInOrder(point) or (#WAYPOINTS + 1)
         table.insert(WAYPOINTS, index, point)
         -- Номера после вставки сдвинулись.
-        if state.editSel and state.editSel >= index then state.editSel = state.editSel + 1 end
+        if type(state.editSel) == "number" and state.editSel >= index then
+            state.editSel = state.editSel + 1
+        end
         if state.waypointCursor and state.waypointCursor >= index then
             state.waypointCursor = state.waypointCursor + 1
         end
@@ -1328,7 +1576,7 @@ local function waypointForget(position, heading)
     waypointDump()
     -- Номера сдвинулись: отмены по старым номерам больше не верны.
     state.editUndo = {}
-    if state.editSel and state.editSel > #WAYPOINTS then state.editSel = #WAYPOINTS end
+    if type(state.editSel) == "number" and state.editSel > #WAYPOINTS then state.editSel = #WAYPOINTS end
     marksSave("удалена #" .. index)
 end
 
@@ -1362,38 +1610,58 @@ local function carPosition()
     return {x = x, y = y, z = finite(z) and z or 0}, finite(rz) and rz or nil
 end
 
+-- Выбранное в эдиторе: метка (номер в списке) или точка выбранного города ("gate"/"finish").
+-- Отдаёт саму точку {x, y, курс, зона, ...} и подпись для заметок.
+local function editorPoint(sel)
+    if sel == nil then sel = state.editSel end
+    if type(sel) == "number" then
+        return WAYPOINTS[sel], string.format("#%d", sel)
+    end
+    local city = City.list[state.editCity or 0]
+    if city and (sel == "gate" or sel == "finish") and city[sel] then
+        return city[sel], city.name .. ": " .. City.LABEL[sel]
+    end
+    return nil
+end
+
 local function editorSelect(index)
-    if not index or not WAYPOINTS[index] then
-        note("Эдитор: такой метки нет")
+    if index == nil or not editorPoint(index) then
+        note(type(index) == "string" and "Эдитор: у этого города такой точки ещё нет"
+            or "Эдитор: такой метки нет")
         return
     end
     state.editSel = index
     -- Старый ползунок размера тоже правит выбранную метку.
-    state.lastWaypoint = index
+    if type(index) == "number" then state.lastWaypoint = index end
 end
 
+-- Ближайшая метка выбранного города (или ближайшая вообще, если город не выбран).
 local function editorNearest()
     local position = carPosition()
     if not position then return nil end
     local best, bestDistance
     for index, point in ipairs(WAYPOINTS) do
-        local d = math.sqrt((point[1] - position.x) ^ 2 + (point[2] - position.y) ^ 2)
-        if not bestDistance or d < bestDistance then best, bestDistance = index, d end
+        local _, cityIndex = City.ofMark(point)
+        if not state.editCity or cityIndex == state.editCity then
+            local d = math.sqrt((point[1] - position.x) ^ 2 + (point[2] - position.y) ^ 2)
+            if not bestDistance or d < bestDistance then best, bestDistance = index, d end
+        end
     end
     return best
 end
 
-local function editorRemember(index)
-    local point = WAYPOINTS[index]
+local function editorRemember(sel)
+    local point = editorPoint(sel)
+    if not point then return end
     state.editUndo = state.editUndo or {}
-    table.insert(state.editUndo, {index = index, count = #WAYPOINTS,
+    table.insert(state.editUndo, {index = sel, city = state.editCity, count = #WAYPOINTS,
         point = {point[1], point[2], point[3], point[4], point[5]}})
     if #state.editUndo > EDIT_UNDO_MAX then table.remove(state.editUndo, 1) end
 end
 
 local function editorNudge(direction, step)
     local index = state.editSel
-    local point = index and WAYPOINTS[index]
+    local point, label = editorPoint(index)
     step = tonumber(step)
     if not point or not finite(step) then return end
     step = clamp(step, 0.05, 10)
@@ -1408,12 +1676,12 @@ local function editorNudge(direction, step)
     editorRemember(index)
     point[1], point[2] = point[1] + dx * step, point[2] + dy * step
     state.planDirty = true
-    marksSave(string.format("#%d сдвинута", index))
+    marksSave(label .. " сдвинута")
 end
 
 local function editorRadius(delta)
     local index = state.editSel
-    local point = index and WAYPOINTS[index]
+    local point, label = editorPoint(index)
     delta = tonumber(delta)
     if not point or not finite(delta) then return end
     local radius = clamp((point[4] or K.WAYPOINT_MID) + delta, K.WAYPOINT_MIN, K.WAYPOINT_MAX)
@@ -1421,17 +1689,21 @@ local function editorRadius(delta)
     editorRemember(index)
     point[4] = radius
     state.planDirty = true
-    marksSave(string.format("#%d зона %g м", index, radius))
+    marksSave(string.format("%s зона %g м", label, radius))
 end
 
 -- Переставить выбранную метку на одну раньше или позже по ходу (среди меток того же
--- маршрута). Отмены по старым номерам после этого не годятся.
+-- маршрута). Метка без маршрута едет на любом, как в buildPlan: до 2.11.3 её считали
+-- чужой, и #18 (nil) нельзя было поменять местами с #17 (маршрут 1). Отмены по старым
+-- номерам после этого не годятся.
 local function editorOrder(delta)
     local index = state.editSel
-    local point = index and WAYPOINTS[index]
+    local point = type(index) == "number" and WAYPOINTS[index]
     if not point or (delta ~= 1 and delta ~= -1) then return end
     local j = index + delta
-    while WAYPOINTS[j] and WAYPOINTS[j][5] ~= point[5] do j = j + delta end
+    while WAYPOINTS[j] and point[5] and WAYPOINTS[j][5] and WAYPOINTS[j][5] ~= point[5] do
+        j = j + delta
+    end
     if not WAYPOINTS[j] then
         note(delta < 0 and "Эдитор: метка и так первая" or "Эдитор: метка и так последняя")
         return
@@ -1444,12 +1716,46 @@ local function editorOrder(delta)
     marksSave(string.format("#%d → #%d", index, j))
 end
 
+-- Привязать выбранную метку к маршруту: к рабочему (выбран в «Создать маршрут»), к текущему,
+-- а без рейса — к последнему. Метка без маршрута едет на любом, и с соседями по маршруту её
+-- путали (#18 у 2.11.3).
+local function editorBindRoute()
+    local index = state.editSel
+    local point = type(index) == "number" and WAYPOINTS[index]
+    if not point then return end
+    local route = state.workRoute or routeId() or state.lastRoute
+    if not route then
+        note("Эдитор: маршрут неизвестен — выбери его в «Создать маршрут» или возьми рейс")
+        return
+    end
+    if point[5] == route then
+        note(string.format("Эдитор: метка #%d уже на маршруте %d", index, route))
+        return
+    end
+    editorRemember(index)
+    point[5] = route
+    state.planDirty = true
+    note(string.format("Эдитор: метка #%d привязана к маршруту %d", index, route))
+    marksSave(string.format("#%d → маршрут %d", index, route))
+end
+
 local function editorUndo()
     local undo = state.editUndo or {}
     while #undo > 0 do
         local last = table.remove(undo)
+        if type(last.index) == "string" then
+            -- Точка города: возвращаем прежнее место, какой бы город ни был выбран сейчас.
+            local city = City.list[last.city or 0]
+            local point = city and city[last.index]
+            if point then
+                for k = 1, 4 do point[k] = last.point[k] end
+                state.editCity, state.editSel = last.city, last.index
+                state.planDirty = true
+                marksSave(city.name .. ": " .. City.LABEL[last.index] .. " отмена")
+                return
+            end
         -- Метки добавляли или удаляли — номер уже про другую метку, такую отмену пропускаем.
-        if last.count == #WAYPOINTS and WAYPOINTS[last.index] then
+        elseif last.count == #WAYPOINTS and WAYPOINTS[last.index] then
             local point = WAYPOINTS[last.index]
             for k = 1, 5 do point[k] = last.point[k] end
             state.editSel, state.lastWaypoint = last.index, last.index
@@ -1459,6 +1765,45 @@ local function editorUndo()
         end
     end
     note("Эдитор: отменять нечего")
+end
+
+-- Город в эдиторе: список меток, маршрутов, точек и светофоров показывается по нему.
+local function editorCity(index)
+    if not City.list[index] then return end
+    if state.editCity ~= index then
+        state.editCity, state.editRoute = index, nil
+        if type(state.editSel) == "string" then state.editSel = nil end
+    end
+end
+
+-- «Создать маршрут»: выбраны город и маршрут — эдитор показывает его, и новые метки ложатся в
+-- него, а не в текущий маршрут рейса. Маршрут 0 — работать по городу, без привязки.
+local function editorWork(cityIndex, route)
+    local city = City.list[cityIndex]
+    if not city then return end
+    editorCity(cityIndex)
+    route = route and route > 0 and route or nil
+    state.editRoute, state.workRoute = route, route
+    note(route and string.format("Создаю маршрут %d (%s): новые метки ложатся в него", route, city.name)
+        or ("Работаю по городу " .. city.name .. ": новые метки — в маршрут рейса"))
+end
+
+-- Поставить ворота или финиш выбранного города там, где сейчас машина (курс — её курс).
+local function editorCityPoint(role)
+    local city = City.list[state.editCity or 0]
+    if not city or not City.LABEL[role] then return end
+    local position, heading = carPosition()
+    if not position then
+        note("Эдитор: не вижу машину")
+        return
+    end
+    if city[role] then editorRemember(role) end
+    city[role] = {position.x, position.y, finite(heading) and heading or 0,
+        city[role] and city[role][4] or (role == "gate" and 3 or 4.5)}
+    state.editSel = role
+    state.planDirty = true
+    marksSave(city.name .. ": " .. City.LABEL[role] .. " поставлены здесь")
+    note(string.format("%s: %s — здесь", city.name, City.LABEL[role]))
 end
 
 -- === единая цепочка проезда: серверные точки + свои метки в одном порядке ===
@@ -1536,6 +1881,61 @@ local GUIDES = {
         {51, 2364.59, 2569.94}, {51, 2343.59, 2568.46}, {51, 2324.50, 2566.46},
         {51, 2304.70, 2563.54}, {52, 2261.46, 2552.07}, {52, 2243.61, 2544.85},
         {52, 2226.11, 2536.10}, {53, 2200.18, 2505.06},
+    },
+    -- Мирный, маршрут 4 «Проспект Мира – Западный берег»: ручной проезд 03.10.2026
+    -- (PlowBot.log, record_begin → record_end, 64 точки сервера). Там, где водитель дальше 1 м
+    -- от прямой между точками, сдвинутыми на его полосу (просто «правее разметки» — не повод).
+    [4] = {
+        {8, -918.02, 420.20}, {8, -938.18, 419.80}, {8, -958.63, 419.32},
+        {8, -979.57, 418.13}, {9, -1015.81, 414.45}, {9, -1036.14, 411.91},
+        {9, -1056.64, 408.37}, {9, -1076.26, 404.18}, {9, -1096.19, 399.43},
+        {9, -1115.48, 394.12}, {10, -1153.81, 382.46}, {10, -1173.53, 374.89},
+        {10, -1192.81, 366.63}, {10, -1211.92, 357.95}, {11, -1247.98, 338.61},
+        {11, -1265.82, 328.10}, {11, -1282.69, 317.01}, {11, -1300.06, 305.02},
+        {12, -1319.02, 290.50}, {12, -1333.87, 276.06}, {12, -1347.67, 261.00},
+        {12, -1361.22, 244.58}, {13, -1374.57, 225.96}, {13, -1384.64, 207.96},
+        {13, -1393.14, 188.84}, {13, -1400.88, 169.26}, {13, -1407.45, 149.24},
+        {14, -1414.56, 127.69}, {14, -1420.52, 107.47}, {14, -1425.13, 87.24},
+        {14, -1429.14, 66.57}, {14, -1431.88, 45.76}, {15, -1438.10, 2.92},
+        {15, -1440.53, -17.33}, {15, -1442.10, -38.32}, {15, -1442.75, -59.17},
+        {18, -1443.14, -381.65}, {18, -1445.24, -402.56}, {18, -1450.48, -422.25},
+        {18, -1459.47, -440.32}, {18, -1471.95, -456.38}, {18, -1487.51, -469.62},
+        {19, -1507.03, -480.80}, {19, -1526.30, -487.11}, {19, -1545.50, -493.86},
+        {19, -1564.19, -503.57}, {19, -1580.67, -516.23}, {19, -1595.06, -531.28},
+        {20, -1605.83, -546.32}, {20, -1614.81, -564.88}, {20, -1625.78, -581.76},
+        {20, -1641.82, -593.58}, {21, -1677.41, -597.85}, {21, -1698.38, -598.28},
+        {21, -1719.37, -597.59}, {22, -1737.91, -590.16}, {22, -1752.28, -575.56},
+        {22, -1769.61, -566.07}, {22, -1789.90, -563.27}, {23, -1795.56, -563.71},
+        {23, -1813.91, -571.07}, {23, -1822.80, -589.37}, {23, -1826.19, -609.87},
+        {24, -1824.99, -621.32}, {24, -1814.54, -639.69}, {24, -1796.39, -647.50},
+        {24, -1775.79, -649.59}, {25, -1764.29, -647.35}, {25, -1746.28, -632.46},
+        {25, -1729.49, -620.92}, {26, -1720.64, -619.53}, {26, -1700.40, -618.99},
+        {26, -1679.53, -619.54}, {26, -1658.58, -620.67}, {26, -1638.85, -623.97},
+        {27, -1630.69, -627.84}, {27, -1617.54, -642.95}, {27, -1609.96, -661.67},
+        {27, -1603.00, -680.52}, {27, -1595.87, -699.80}, {28, -1568.99, -772.55},
+        {28, -1561.64, -792.42}, {29, -1544.91, -830.12}, {29, -1535.54, -848.24},
+        {29, -1525.30, -866.10}, {29, -1513.95, -883.14}, {29, -1501.03, -899.63},
+        {30, -1487.15, -919.44}, {30, -1483.16, -939.34}, {30, -1484.80, -960.15},
+        {30, -1487.61, -980.03}, {31, -1492.24, -994.70}, {31, -1503.37, -1012.36},
+        {31, -1519.41, -1025.26}, {31, -1537.97, -1033.01}, {31, -1558.23, -1036.36},
+        {35, -1869.55, -1036.67}, {35, -1890.31, -1036.60}, {35, -1911.33, -1036.53},
+        {35, -1931.61, -1036.34}, {35, -1951.83, -1033.03}, {36, -1970.53, -1023.10},
+        {36, -1984.79, -1008.28}, {36, -1995.14, -991.13}, {36, -2000.52, -971.03},
+        {36, -2001.56, -950.66}, {48, -2001.81, 366.36}, {48, -1991.24, 382.56},
+        {48, -1970.93, 380.44}, {51, -1659.51, 377.44}, {51, -1639.14, 377.42},
+        {52, -1588.68, 374.36}, {52, -1568.22, 372.78}, {52, -1548.30, 370.19},
+        {52, -1528.32, 367.42}, {52, -1507.69, 363.64}, {52, -1488.14, 359.07},
+        {53, -1467.33, 352.87}, {53, -1447.82, 345.89}, {53, -1428.89, 337.76},
+        {53, -1410.45, 329.34}, {53, -1391.69, 319.98}, {53, -1374.21, 308.81},
+        {53, -1357.71, 297.45}, {54, -1347.04, 289.47}, {54, -1329.66, 279.23},
+        {54, -1309.80, 277.20}, {54, -1289.27, 280.76}, {55, -1261.98, 295.25},
+        {55, -1243.68, 305.33}, {55, -1225.80, 314.62}, {55, -1207.21, 324.26},
+        {55, -1188.99, 333.72}, {55, -1169.71, 342.34}, {55, -1150.90, 349.27},
+        {55, -1131.51, 356.27}, {56, -1097.09, 367.03}, {56, -1077.42, 371.80},
+        {56, -1056.96, 376.40}, {56, -1036.82, 380.03}, {56, -1016.50, 382.55},
+        {56, -995.75, 384.83}, {56, -975.70, 387.03}, {56, -954.78, 388.78},
+        {63, -104.45, 388.89}, {63, -84.04, 390.68}, {63, -62.97, 393.00},
+        {63, -41.92, 395.01}, {63, -21.80, 397.19}, {63, -1.77, 399.45},
     },
 }
 
@@ -1719,10 +2119,121 @@ Path.LINE = {
         {53, 2200.18, 2505.06}, {53, 2202.21, 2499.37}, {54, 2211.69, 2488.84}, {54, 2232.27, 2464.77},
         {54, 2254.35, 2434.74}, {54, 2267.61, 2417.69},
     },
+    -- Мирный, маршрут 4: ручной проезд 03.10.2026 целиком — от места выдачи машины через ворота
+    -- депо к S1, весь маршрут и от S64 через ворота к стоянке. Дуглас–Пекер 0.3 м (отклонение от
+    -- сырой траектории не больше 0.3 м), не реже чем через 30 м. Отрезок — по засчёту сервера.
+    [4] = {
+        {0, 14.68, 506.36}, {0, 12.37, 504.27}, {0, 11.22, 501.42}, {0, 11.12, 484.04},
+        {0, 13.12, 459.96}, {0, 15.87, 434.53}, {0, 15.72, 431.41}, {0, 14.45, 427.40},
+        {0, 11.78, 423.75}, {0, 7.89, 421.00}, {0, 3.67, 419.57}, {1, -26.59, 419.38},
+        {1, -44.23, 419.12}, {1, -75.26, 419.35}, {2, -106.23, 419.59}, {2, -136.76, 419.80},
+        {2, -167.55, 420.01}, {2, -197.68, 420.22}, {3, -228.26, 420.44}, {3, -259.14, 420.65},
+        {3, -280.72, 420.81}, {3, -311.09, 420.61}, {3, -334.92, 420.56}, {4, -352.32, 420.97},
+        {4, -382.59, 421.01}, {4, -413.39, 421.07}, {4, -444.31, 421.14}, {4, -448.44, 421.14},
+        {4, -478.60, 420.70}, {5, -508.76, 420.28}, {5, -531.69, 419.97}, {5, -562.70, 420.04},
+        {5, -593.70, 419.86}, {5, -608.24, 419.78}, {6, -638.96, 418.60}, {6, -648.08, 418.39},
+        {6, -678.34, 419.27}, {6, -704.96, 420.07}, {6, -735.92, 420.35}, {7, -766.65, 420.64},
+        {7, -797.38, 420.93}, {7, -828.05, 421.22}, {7, -854.69, 421.47}, {8, -885.86, 420.83},
+        {8, -916.69, 420.22}, {8, -947.91, 419.61}, {8, -972.86, 418.78}, {9, -1003.62, 415.79},
+        {9, -1013.62, 414.74}, {9, -1036.14, 411.91}, {9, -1057.84, 408.16}, {9, -1088.04, 401.39},
+        {9, -1096.19, 399.43}, {9, -1125.26, 391.40}, {10, -1152.56, 382.91}, {10, -1181.13, 371.78},
+        {10, -1208.93, 359.43}, {10, -1212.97, 357.42}, {11, -1239.47, 343.18}, {11, -1247.98, 338.61},
+        {11, -1261.75, 330.63}, {11, -1283.69, 316.35}, {11, -1306.57, 300.45}, {12, -1319.02, 290.50},
+        {12, -1327.53, 282.61}, {12, -1342.74, 266.58}, {12, -1351.76, 256.35}, {13, -1370.11, 233.01},
+        {13, -1376.92, 222.07}, {13, -1383.96, 209.22}, {13, -1395.94, 182.36}, {13, -1402.17, 165.76},
+        {14, -1411.80, 136.16}, {14, -1414.18, 128.90}, {14, -1420.19, 108.70}, {14, -1427.16, 78.41},
+        {14, -1427.37, 77.46}, {14, -1430.77, 56.33}, {14, -1433.73, 29.11}, {15, -1438.72, -1.50},
+        {15, -1439.32, -5.83}, {15, -1441.96, -34.45}, {15, -1442.71, -53.57}, {16, -1442.92, -84.41},
+        {16, -1442.97, -114.57}, {16, -1442.98, -144.78}, {16, -1442.98, -175.64}, {16, -1442.98, -206.83},
+        {16, -1442.99, -237.71}, {17, -1443.00, -268.45}, {17, -1443.01, -298.72}, {17, -1443.02, -328.80},
+        {17, -1443.04, -359.69}, {18, -1443.04, -378.43}, {18, -1443.41, -387.29}, {18, -1444.80, -400.07},
+        {18, -1447.25, -412.14}, {18, -1451.24, -424.21}, {18, -1457.45, -436.99}, {18, -1465.04, -448.37},
+        {18, -1471.95, -456.38}, {18, -1479.24, -463.09}, {19, -1494.56, -474.55}, {19, -1502.97, -479.07},
+        {19, -1512.14, -482.81}, {19, -1535.21, -489.83}, {19, -1551.51, -496.50}, {19, -1564.19, -503.57},
+        {19, -1577.20, -513.08}, {19, -1591.99, -527.69}, {20, -1602.12, -540.67}, {20, -1605.83, -546.32},
+        {20, -1610.27, -554.45}, {20, -1617.47, -570.29}, {20, -1622.68, -578.14}, {20, -1627.35, -583.35},
+        {20, -1631.97, -587.22}, {20, -1637.76, -591.32}, {20, -1643.00, -594.12}, {20, -1647.39, -595.55},
+        {20, -1655.28, -596.79}, {21, -1685.32, -598.16}, {21, -1710.20, -598.13}, {21, -1724.98, -596.82},
+        {22, -1730.47, -595.14}, {22, -1735.45, -592.28}, {22, -1754.73, -573.22}, {22, -1760.83, -568.89},
+        {22, -1765.16, -567.16}, {22, -1777.38, -564.25}, {22, -1784.40, -563.30}, {23, -1791.01, -563.30},
+        {23, -1797.71, -564.12}, {23, -1806.43, -566.64}, {23, -1812.19, -569.71}, {23, -1815.83, -572.93},
+        {23, -1818.31, -576.24}, {23, -1819.99, -579.66}, {23, -1823.48, -591.81}, {23, -1825.45, -600.69},
+        {23, -1826.10, -606.12}, {23, -1826.18, -612.48}, {24, -1825.27, -620.20}, {24, -1823.20, -626.27},
+        {24, -1817.83, -635.80}, {24, -1813.53, -640.61}, {24, -1808.68, -643.79}, {24, -1800.02, -646.63},
+        {24, -1791.09, -648.66}, {24, -1785.37, -649.39}, {24, -1777.02, -649.64}, {25, -1770.10, -649.08},
+        {25, -1765.38, -647.80}, {25, -1757.93, -644.04}, {25, -1752.90, -640.46}, {25, -1750.43, -638.01},
+        {25, -1743.60, -629.21}, {25, -1741.02, -626.77}, {25, -1736.98, -623.97}, {25, -1732.88, -621.99},
+        {26, -1728.45, -620.69}, {26, -1714.20, -618.99}, {26, -1706.64, -618.79}, {26, -1676.33, -619.63},
+        {26, -1672.44, -619.75}, {26, -1656.50, -620.82}, {26, -1646.65, -622.07}, {26, -1638.85, -623.97},
+        {27, -1632.61, -626.65}, {27, -1628.21, -629.73}, {27, -1622.36, -635.44}, {27, -1619.74, -639.07},
+        {27, -1616.95, -644.15}, {27, -1611.05, -658.73}, {27, -1600.55, -687.13}, {28, -1589.83, -716.15},
+        {28, -1579.41, -744.33}, {28, -1568.99, -772.55}, {28, -1561.21, -793.58}, {28, -1552.19, -815.02},
+        {29, -1538.37, -842.86}, {29, -1536.78, -845.95}, {29, -1526.58, -864.06}, {29, -1515.41, -881.21},
+        {29, -1496.84, -904.93}, {29, -1493.09, -909.76}, {30, -1488.69, -916.39}, {30, -1486.35, -921.48},
+        {30, -1484.70, -927.10}, {30, -1483.49, -935.80}, {30, -1483.00, -942.79}, {30, -1483.21, -948.43},
+        {30, -1486.52, -974.32}, {30, -1487.81, -981.00}, {31, -1490.53, -990.30}, {31, -1493.69, -997.89},
+        {31, -1499.02, -1006.95}, {31, -1506.59, -1015.70}, {31, -1516.41, -1023.42}, {31, -1525.89, -1028.73},
+        {31, -1534.43, -1031.97}, {31, -1547.52, -1035.26}, {31, -1558.23, -1036.36}, {32, -1577.62, -1037.10},
+        {32, -1607.88, -1037.57}, {32, -1619.88, -1037.76}, {32, -1631.44, -1037.40}, {33, -1661.64, -1037.33},
+        {33, -1692.23, -1037.24}, {33, -1722.71, -1037.14}, {33, -1752.96, -1037.05}, {34, -1783.44, -1036.95},
+        {34, -1814.69, -1036.85}, {34, -1845.60, -1036.75}, {35, -1876.22, -1036.65}, {35, -1906.44, -1036.55},
+        {35, -1927.40, -1036.48}, {35, -1935.90, -1036.07}, {35, -1942.24, -1035.22}, {35, -1951.83, -1033.03},
+        {35, -1957.41, -1031.18}, {35, -1961.77, -1029.13}, {36, -1968.64, -1024.56}, {36, -1974.31, -1019.94},
+        {36, -1979.24, -1014.97}, {36, -1984.79, -1008.28}, {36, -1992.62, -996.21}, {36, -1995.60, -990.09},
+        {36, -1997.64, -984.53}, {36, -1999.69, -976.53}, {36, -2000.81, -968.86}, {36, -2001.58, -954.10},
+        {37, -2001.58, -923.15}, {37, -2001.61, -892.36}, {37, -2001.64, -861.97}, {38, -2001.66, -831.91},
+        {38, -2001.68, -801.37}, {38, -2001.70, -771.16}, {38, -2001.73, -740.54}, {39, -2001.76, -709.84},
+        {39, -2001.78, -678.99}, {39, -2001.80, -648.64}, {40, -2001.82, -617.49}, {40, -2001.83, -587.00},
+        {40, -2001.85, -556.53}, {41, -2001.86, -525.53}, {41, -2001.88, -495.34}, {41, -2001.89, -465.27},
+        {41, -2001.90, -434.96}, {42, -2001.92, -404.33}, {42, -2001.94, -374.05}, {42, -2001.94, -343.45},
+        {43, -2001.96, -313.10}, {43, -2001.97, -282.17}, {43, -2001.98, -251.47}, {43, -2001.99, -220.71},
+        {43, -2001.99, -190.00}, {44, -2002.00, -159.39}, {44, -2002.00, -128.63}, {44, -2002.00, -97.89},
+        {44, -2002.00, -67.61}, {45, -2002.00, -36.33}, {45, -2002.00, -5.17}, {45, -2002.00, 25.63},
+        {45, -2001.99, 56.69}, {46, -2001.99, 87.02}, {46, -2001.98, 117.36}, {46, -2001.98, 148.20},
+        {46, -2001.96, 178.59}, {47, -2001.94, 209.21}, {47, -2001.92, 240.12}, {47, -2001.91, 270.52},
+        {47, -2001.90, 300.76}, {47, -2001.88, 331.42}, {48, -2001.88, 362.09}, {48, -2001.88, 364.35},
+        {48, -2001.51, 369.24}, {48, -2000.44, 373.44}, {48, -1998.48, 377.14}, {48, -1995.28, 380.45},
+        {48, -1991.24, 382.56}, {48, -1986.81, 383.28}, {48, -1974.68, 380.84}, {48, -1963.48, 379.71},
+        {49, -1953.49, 378.99}, {49, -1930.70, 378.34}, {49, -1900.51, 378.07}, {49, -1869.49, 377.76},
+        {50, -1839.38, 377.45}, {50, -1812.86, 377.18}, {50, -1782.47, 377.44}, {50, -1751.58, 377.45},
+        {50, -1721.36, 377.44}, {51, -1691.29, 377.44}, {51, -1660.62, 377.44}, {51, -1639.14, 377.42},
+        {51, -1610.25, 376.04}, {52, -1579.87, 373.69}, {52, -1568.22, 372.78}, {52, -1538.17, 368.89},
+        {52, -1531.68, 368.02}, {52, -1508.80, 363.88}, {52, -1485.64, 358.47}, {53, -1468.46, 353.28},
+        {53, -1440.57, 343.13}, {53, -1412.62, 330.34}, {53, -1404.23, 326.50}, {53, -1393.83, 321.27},
+        {53, -1368.43, 304.98}, {53, -1364.85, 302.61}, {54, -1340.99, 284.82}, {54, -1334.52, 280.86},
+        {54, -1329.66, 279.23}, {54, -1319.84, 277.37}, {54, -1312.21, 277.08}, {54, -1304.75, 277.57},
+        {54, -1294.16, 279.36}, {54, -1284.71, 282.54}, {55, -1257.43, 297.88}, {55, -1250.56, 301.79},
+        {55, -1223.41, 315.86}, {55, -1195.76, 330.20}, {55, -1186.97, 334.77}, {55, -1180.15, 337.92},
+        {55, -1164.54, 344.42}, {55, -1136.30, 354.55}, {55, -1118.78, 360.83}, {56, -1100.62, 366.16},
+        {56, -1072.71, 372.96}, {56, -1058.13, 376.18}, {56, -1037.94, 379.84}, {56, -1027.74, 381.37},
+        {56, -996.94, 384.70}, {56, -967.33, 387.94}, {56, -952.15, 388.95}, {57, -927.49, 389.65},
+        {57, -896.77, 389.82}, {57, -865.77, 390.01}, {57, -858.27, 390.06}, {57, -827.38, 389.77},
+        {58, -796.80, 389.49}, {58, -766.56, 389.21}, {58, -736.47, 388.93}, {58, -705.70, 388.64},
+        {58, -680.37, 388.41}, {59, -649.78, 388.75}, {59, -619.20, 389.09}, {59, -588.85, 389.41},
+        {59, -558.33, 389.74}, {59, -527.41, 390.08}, {60, -497.51, 390.40}, {60, -475.28, 389.90},
+        {60, -445.19, 389.74}, {60, -414.50, 389.56}, {60, -383.60, 389.37}, {61, -353.53, 389.19},
+        {61, -322.63, 389.00}, {61, -291.79, 388.81}, {61, -261.03, 388.61}, {62, -230.90, 388.42},
+        {62, -211.73, 388.30}, {62, -181.63, 388.80}, {62, -177.06, 388.88}, {62, -146.87, 388.70},
+        {63, -116.42, 388.82}, {63, -105.56, 388.86}, {63, -95.55, 389.37}, {63, -65.44, 392.73},
+        {63, -50.47, 394.38}, {63, -38.61, 395.25}, {63, -8.72, 398.66}, {63, 3.10, 400.11},
+        {63, 9.08, 401.99}, {64, 13.94, 405.15}, {64, 16.77, 409.15}, {64, 17.92, 413.55},
+        {64, 17.17, 431.76}, {64, 16.27, 440.56}, {64, 15.80, 456.11}, {64, 15.51, 486.70},
+        {64, 15.35, 503.10}, {64, 15.96, 533.39}, {64, 16.31, 551.04},
+    },
 }
+
+-- Записанные проезды целиком: их линия идёт и по выезду из депо (отрезок 0), и по въезду до
+-- финиша города (отрезок n), поэтому рельсы меток там не нужны. Запись применяем, только если
+-- сервер выдал тот же маршрут, что и при записи: столько же точек, первая и последняя на месте.
+-- Иначе маршрут едет по-старому — по точкам сервера, без линии, направляющих и смещений полосы.
+Path.RECORDED = {
+    [4] = {count = 64, first = {-6.93, 418.42}, last = {16.28, 401.44}},
+}
+Path.RECORDED_MATCH = 5  -- м: насколько могут уехать первая и последняя точка сервера
 
 local function buildPlan(route)
     plan.route, plan.items, plan.serverCount = route, {}, 0
+    plan.full, plan.mismatch, plan.city = nil, nil, nil
     local points = routePoints()
     if not points or #points == 0 then return end
     local server = {}
@@ -1734,6 +2245,22 @@ local function buildPlan(route)
     local n = #server
     plan.serverCount = n
     plan.server = server
+    -- Записанный проезд: тот ли это маршрут, что записывали. Не тот — линия, направляющие и
+    -- смещения полосы этого номера не годятся (plan.mismatch), едем по-старому.
+    local rec = Path.RECORDED[route]
+    if rec then
+        local function off(p, q) return math.sqrt((p.x - q[1]) ^ 2 + (p.y - q[2]) ^ 2) end
+        if rec.count == n and off(server[1], rec.first) <= Path.RECORDED_MATCH
+            and off(server[n], rec.last) <= Path.RECORDED_MATCH and Path.LINE[route] then
+            plan.full = true
+        else
+            plan.mismatch = true
+            note(string.format("Маршрут %d не совпал с записанным проездом — еду по точкам сервера",
+                route))
+        end
+    end
+    -- Город маршрута: его ворота депо и финиш — первое и последние звенья цепочки.
+    plan.city = City.of(server[1])
     local marks = {}
     for index, point in ipairs(WAYPOINTS) do
         if not point[5] or point[5] == route then
@@ -1809,7 +2336,7 @@ local function buildPlan(route)
             plan.items[#plan.items + 1] = {kind = "server", index = slot,
                 x = server[slot].x, y = server[slot].y}
         end
-        local guides = GUIDES[route]
+        local guides = not plan.mismatch and GUIDES[route] or nil
         if guides and slot >= 1 and slot < n and not bySlot[slot] then
             for _, g in ipairs(guides) do
                 if g[1] == slot then
@@ -1823,18 +2350,33 @@ local function buildPlan(route)
                 x = p[1], y = p[2], h = p[3], r = p[4] or K.WAYPOINT_MID}
         end
     end
+    -- Точки города — звенья без номера: ворота на выезде (до S1), ворота на въезде и финиш
+    -- (после Sn). На въезде курс ворот обратный: их ставили, выезжая.
+    local city = plan.city
+    local g, f = city and city.gate, city and city.finish
+    if g then
+        table.insert(plan.items, 1, {kind = "mark", city = "gate", slot = 0, x = g[1], y = g[2],
+            h = g[3], r = g[4], label = city.name .. ": выезд"})
+        plan.items[#plan.items + 1] = {kind = "mark", city = "gate", slot = n, x = g[1], y = g[2],
+            h = (g[3] + 180) % 360, r = g[4], label = city.name .. ": въезд"}
+    end
+    if f then
+        plan.items[#plan.items + 1] = {kind = "mark", city = "finish", slot = n, x = f[1], y = f[2],
+            h = f[3], r = f[4], label = city.name .. ": финиш"}
+    end
     local last = plan.items[#plan.items]
     if last and last.kind == "mark" then last.final = true end
     local markCount = 0
     for _, item in ipairs(plan.items) do
-        if item.kind == "mark" then markCount = markCount + 1 end
+        if item.kind == "mark" and not item.city then markCount = markCount + 1 end
     end
     local guideCount = 0
     for _, item in ipairs(plan.items) do
         if item.kind == "guide" then guideCount = guideCount + 1 end
     end
     emit("plan_built", {route = route, server = n, marks = markCount, guides = guideCount,
-        dropped = #marks - markCount}, true)
+        dropped = #marks - markCount, city = city and city.name or NULL,
+        recorded = plan.full == true, mismatch = plan.mismatch == true}, true)
     Path.rebuild()
 end
 
@@ -1892,6 +2434,7 @@ end
 
 local function planLabel(item)
     if item.kind ~= "mark" then return nil end
+    if item.city then return item.label .. (item.final and " ФИНИШ" or "") end
     return string.format("метка #%d/%d (r%g)%s", item.mark, #WAYPOINTS, item.r,
         item.final and " ФИНИШ" or "")
 end
@@ -1946,10 +2489,18 @@ local LANE_OFFSETS = {
         0.7, 0.7, 1.5, 1.7, 1.7, 2.1, 0.2, -1.6, -0.8, -0.3, 1.1, 2.1, 1.0, 1.9, 0.6, 1.7,
         0.7, 1.4, 2.0, 1.6, 1.6, 1.5, 1.5, 1.6, 2.3, 2.2, 1.7, 2.1, 2.0, 1.1, 1.4, 1.8,
         0.7, 1.5, 1.1, 0.9, 1.1, 0.1},
+    -- Мирный, маршрут 4, ручной проезд 03.10.2026, S1…S64: ближайшая к центру точка пути
+    -- водителя, вбок от направления маршрута. У S64 водитель уже поворачивал налево к воротам.
+    [4] = {
+        1.3, 0.9, 1.1, 1.9, 0.8, -0.2, 0.9, 1.8, 0.6, 0.8, 0.0, 0.1, 1.7, 0.9, -1.4, 1.3,
+        1.2, 1.2, 0.4, 0.8, 0.1, 2.6, -1.7, -2.9, -2.3, 1.8, 0.9, -0.9, 0.1, 0.5, 0.6, 0.3,
+        0.9, 1.3, 1.0, 1.2, 1.4, 1.1, 0.8, 1.2, 1.2, 1.4, 0.8, 1.4, 1.0, 1.0, 0.9, 1.2,
+        0.4, 1.9, 2.3, 1.2, 1.8, -0.4, -0.6, 0.8, 1.5, 1.6, 2.4, 0.7, 1.9, 2.1, 1.4, -3.3,
+    },
 }
 
 local function laneShifted(index, point, z)
-    local offsets = LANE_OFFSETS[plan.route]
+    local offsets = not plan.mismatch and LANE_OFFSETS[plan.route] or nil
     local offset = offsets and offsets[index]
     local server = plan.server
     if not finite(offset) or offset == 0 or not server or not server[index] then
@@ -2075,7 +2626,9 @@ local function planStep(position, heading, current, live, speed)
         -- Только там, где линия известна: к своей метке или на маршруте с линией водителя
         -- (смещения полосы). На маршрутах без них точка стоит на разметке между полосами, и
         -- проход ровно через неё добавил вдвое рывков руля (маршруты 2–9 в тесте).
-        if items[i].kind ~= "mark" and not LANE_OFFSETS[plan.route] then return nil end
+        if items[i].kind ~= "mark" and (plan.mismatch or not LANE_OFFSETS[plan.route]) then
+            return nil
+        end
         local pass = laneShifted(prev.index, prev, position.z)
         local rad = math.rad(heading)
         local ahead = (pass.x - position.x) * -math.sin(rad) + (pass.y - position.y) * math.cos(rad)
@@ -2093,10 +2646,11 @@ local function planStep(position, heading, current, live, speed)
         -- target — настоящая цель (по ней торможение и поворот), aim — куда рулить.
         local target, aim, rail
         if (isRail(item) and isRail(items[i - 1]))
-            or (item.kind == "mark" and item.final and items[i - 1]) then
+            or (item.kind == "mark" and item.final and items[i - 1] and not plan.full) then
             -- По рельсу: на выезде — от метки к метке депо до первой точки; к месту сдачи —
             -- всегда, от прошлого звена (метки или последней точки) через ворота депо.
-            -- Дальше следующей метки депо не смотрим.
+            -- Дальше следующей метки депо не смотрим. Записанный проезд целиком (plan.full)
+            -- знает и въезд до финиша — туда ведёт его линия, рельс не нужен.
             target = {x = item.x, y = item.y, z = position.z}
             aim, rail = railAim(position, speed, items[i - 1], item,
                 isRail(items[i + 1]) and items[i + 1] or nil)
@@ -2135,7 +2689,8 @@ local function planStep(position, heading, current, live, speed)
                     item.y - position.y) - heading))
                 -- Метку только что поставили под машиной: пока стоим в ней, она не цель и
                 -- не засчитывается. Выехали — дальше она обычная метка, в этом же кадре.
-                local fresh = state.waypointSkip == item.mark
+                -- У точек города номера нет: nil == nil не делает их «свежими».
+                local fresh = item.mark ~= nil and state.waypointSkip == item.mark
                 if fresh and d > item.r + BODY_HALF_WIDTH then
                     state.waypointSkip, fresh = nil, false
                 end
@@ -2427,7 +2982,7 @@ Path.TAPER, Path.NEAR = 35, 4          -- притяжение линии вод
 Path.LEAD, Path.LEAD_MIN, Path.LEAD_MAX = 1.0, 6, 18   -- прицел: 1 с пути, 6–18 м
 Path.TOL, Path.TOL_MARK = 1.0, 0.6     -- насколько прямая к прицелу может срезать линию
 Path.OFF = 8                           -- дальше этого от линии — едем по-старому, к цели
-Path.CUT = 5                           -- без линии водителя: угол у точки сервера срезаем до 5 м
+Path.CUT, Path.MINR = 1.5, 9            -- без линии водителя: вершина дуги у точки сервера, радиус грузовика
 Path.n = 0
 
 do
@@ -2695,28 +3250,42 @@ do
         Path.n, Path.cursor, Path.frame, Path.searchAt = 0, nil, nil, nil
         local items, count = plan.items, plan.serverCount
         if #items < 2 then return end
-        local line = Path.LINE[plan.route]
+        local line = not plan.mismatch and Path.LINE[plan.route] or nil
         local ctrl = {}
         if line then
             local marks, inner, core = {}, {}, {}
+            -- Выезд из депо и въезд — по одним меткам: там рельсы, линию водителя не берём.
+            -- Записанный проезд целиком (plan.full) — по его линии и там.
+            for _, g in ipairs(line) do
+                if plan.full or (g[1] >= 1 and g[1] < count) then core[#core + 1] = g end
+            end
+            -- Ворота города, через зону которых водитель и так проехал, путь к своему центру не
+            -- тянут: центр ворот — середина проезда, а водитель держался своей стороны.
+            local function crossed(item)
+                for i = 1, #core - 1 do
+                    local a, b = core[i], core[i + 1]
+                    if math.abs(a[1] - item.slot) <= 1
+                        and segmentDistance(item.x, item.y, a[2], a[3], b[2], b[3]) <= item.r - 1 then
+                        return true
+                    end
+                end
+                return false
+            end
             for order, item in ipairs(items) do
-                if item.kind == "mark" then
+                if item.kind == "mark" and not (plan.full and item.city == "gate" and crossed(item)) then
                     local mk = {x = item.x, y = item.y, h = item.h, slot = item.slot, order = order}
                     marks[#marks + 1] = mk
                     if item.slot >= 1 and item.slot < count then inner[#inner + 1] = mk end
                 end
             end
-            -- Выезд из депо и въезд — по одним меткам: там рельсы, линию водителя не берём.
-            for _, g in ipairs(line) do
-                if g[1] >= 1 and g[1] < count then core[#core + 1] = g end
-            end
             ctrl = merge(bend(smoothLine(core), inner), marks)
             -- Рельсы депо (метки до первой точки и после последней) — прямыми отрезками, как их и
-            -- ведёт бот: точки через 2 м между соседними метками рельса.
+            -- ведёт бот: точки через 2 м между соседними метками рельса. У записанного целиком
+            -- проезда выезд и въезд знает линия.
             local railed = {}
             for i, c in ipairs(ctrl) do
                 local prev = ctrl[i - 1]
-                if prev and c.kind == "mark" and prev.kind == "mark"
+                if not plan.full and prev and c.kind == "mark" and prev.kind == "mark"
                     and (c.slot == 0 or c.slot >= count) and (prev.slot == 0 or prev.slot >= count) then
                     local d = math.sqrt((c.x - prev.x) ^ 2 + (c.y - prev.y) ^ 2)
                     for q = 1, math.floor(d / 2) - 1 do
@@ -2730,17 +3299,30 @@ do
             ctrl = railed
         else
             local raw = {}
+            local city = plan.city
             for _, item in ipairs(items) do
-                if item.kind == "server" then
+                -- Ворота города: выезд со стоянки и въезд к финишу — по линии водителя (она общая
+                -- для всех маршрутов города), а не прямой через стоянку к центру ворот.
+                local cityLine = item.city == "gate" and city
+                    and (item.slot == 0 and city.exit or item.slot >= count and city.entry) or nil
+                if cityLine then
+                    for _, g in ipairs(cityLine) do
+                        raw[#raw + 1] = {kind = "line", x = g[1], y = g[2], slot = item.slot}
+                    end
+                elseif item.kind == "server" then
                     local p = laneShifted(item.index, item, 0)
                     raw[#raw + 1] = {kind = "server", x = p.x, y = p.y, slot = item.index}
                 else
                     raw[#raw + 1] = {kind = item.kind, x = item.x, y = item.y, h = item.h, slot = item.slot}
                 end
             end
-            -- Точку сервера на углу скругляем внутрь сферы зачёта, как самолёт — дугой, вписанной
-            -- в угол (не дальше CUT от точки): через саму точку угол шёл бы радиусом 4–8 м, и бот
-            -- полз бы на каждом перекрёстке. Край дуги — две точки на отрезках, курс — по отрезку.
+            -- Точку сервера на углу скругляем дугой, вписанной в угол, но вершина дуги проходит не
+            -- дальше CUT от самой точки: точки сервера стоят на линии поворота водителя (в ручном
+            -- проезде маршрута 4 он проходил угловые точки 30–93° в 0.4–2.9 м). Прежние 5 м давали
+            -- дугу, начатую за 12 м до точки, — бот заворачивал раньше точки и срезал угол по
+            -- тротуару (маршрут 5, 2.13.2). Дуга круче, чем грузовик может, — радиус не меньше
+            -- MINR, а саму дугу выносим наружу, чтобы вершина всё равно легла у точки: заходит в
+            -- поворот шире и позже, как водитель грузовика. Край дуги — две точки, курс — по отрезку.
             for i, c in ipairs(raw) do
                 local a, b = raw[i - 1], raw[i + 1]
                 local filleted = false
@@ -2750,14 +3332,20 @@ do
                     local th = math.rad(math.abs(angle(bearingTo(ox, oy) - bearingTo(ix, iy))))
                     if th > math.rad(4) and th < math.rad(150) and lin > 2 and lout > 2 then
                         local half = th / 2
-                        local R = math.min(Path.CUT / (1 / math.cos(half) - 1), 200)
+                        local sag = 1 / math.cos(half) - 1      -- вершина дуги от угла, в радиусах
+                        local R = math.min(math.max(Path.CUT / sag, Path.MINR), 200)
                         local T = math.min(R * math.tan(half), 0.45 * math.min(lin, lout))
+                        R = T / math.tan(half)
+                        -- Вынос наружу по биссектрисе: на сколько вершина дуги дальше CUT от точки.
+                        local push = math.max(0, R * sag - Path.CUT)
+                        local bx, by = unit(ix - ox, iy - oy)   -- наружу угла
+                        local sx, sy = bx * push, by * push
                         -- Касательные точной дуги (4R·tg(θ/4)): с длиной хорды кривая выходила
                         -- площе дуги и срезала угол до 7.4 м — дальше сферы, точку не засчитывали.
-                        local mag = 4 * (T / math.tan(half)) * math.tan(th / 4)
-                        ctrl[#ctrl + 1] = {kind = "fillet", x = c.x - ix * T, y = c.y - iy * T,
+                        local mag = 4 * R * math.tan(th / 4)
+                        ctrl[#ctrl + 1] = {kind = "fillet", x = c.x - ix * T + sx, y = c.y - iy * T + sy,
                             slot = c.slot - 1, dir = {ix, iy}, arc = i, mag = mag}
-                        ctrl[#ctrl + 1] = {kind = "fillet", x = c.x + ox * T, y = c.y + oy * T,
+                        ctrl[#ctrl + 1] = {kind = "fillet", x = c.x + ox * T + sx, y = c.y + oy * T + sy,
                             slot = c.slot, dir = {ox, oy}, arc = i, mag = mag}
                         filleted = true
                     end
@@ -2846,6 +3434,27 @@ do
             if ok then return x1, y1, length end
             length = math.max(Path.LEAD_MIN, length - 1)
         end
+    end
+
+    -- Руль — от задней оси. Pure pursuit точен только для точки на задней оси, а позиция
+    -- машины — центр кузова, у грузовика на ~2.4 м впереди неё. В повороте скорость центра
+    -- повёрнута внутрь относительно курса кузова, и прицел «от центра» срезал каждый поворот
+    -- на REAR·прицел/радиус: 1.3 м в поворотах 25–40 м, столбы и бордюр внутри поворота
+    -- (заезд 2.13.1 по маршруту 4, 03.10.2026: срез по радиусам ложится на эту формулу).
+    -- Дугу считаем от задней оси к точке пути, а контроллеру отдаём прицел от центра на той же
+    -- дуге: он ведёт руль на расстояние до прицела, если оно короче 15 м.
+    Path.REAR = 2.4
+    function Path.steerAim(frame, position, heading, speed)
+        local rad = math.rad(heading)
+        local rx, ry = position.x + math.sin(rad) * Path.REAR, position.y - math.cos(rad) * Path.REAR
+        local ax, ay, lead = Path.aim(frame.s - Path.REAR, speed)
+        local dx, dy = ax - rx, ay - ry
+        local d = math.sqrt(dx * dx + dy * dy)
+        if d < 1 then return ax, ay, lead end
+        local k = 2 * math.sin(math.rad(angle(bearingTo(dx, dy) - heading))) / d
+        local D = math.min(d, 15, 1.5 / math.max(math.abs(k), 1e-6))
+        local a = math.asin(clamp(k * D / 2, -1, 1))
+        return position.x - math.sin(rad + a) * D, position.y + math.cos(rad + a) * D, lead
     end
 
     -- Скорость, с которой ещё можно пройти все изгибы пути впереди (с тормозным путём до них).
@@ -3142,6 +3751,20 @@ local function squeezeShift(position, heading, curvature, most, skip)
             seen = true
             if side >= 0 then hi = math.min(hi, side - SQUEEZE_CLEAR)
             else lo = math.max(lo, side + SQUEEZE_CLEAR) end
+        end
+    end
+    -- Выученные удары: тот же сдвиг, но запас больше — на сколько бот уже учился здесь.
+    for _, b in ipairs(Bumps.list) do
+        local ahead, side = -9, 99
+        if (b[1] - nose.x) ^ 2 + (b[2] - nose.y) ^ 2 < far then
+            ahead, side = Path.place(nose, heading, curvature, b[1], b[2])
+        end
+        local clear = SQUEEZE_CLEAR + Bumps.margin(b)
+        if ahead > -1 and ahead < K.SQUEEZE_REACH and math.abs(side) < clear + most
+            and not (skip and skip(b[1], b[2])) then
+            seen = true
+            if side >= 0 then hi = math.min(hi, side - clear)
+            else lo = math.max(lo, side + clear) end
         end
     end
     if not seen then return 0 end
@@ -3548,6 +4171,142 @@ local function buildSuffix()
     state.suffix = suffix
 end
 
+-- === поворотники и аварийка ===
+-- На Province: «[» — левый поворотник, «]» — правый, «O» — аварийка, каждая клавиша
+-- переключает. Где сервер держит их состояние, в дампе нет, поэтому бот помнит свои нажатия
+-- сам, а после первых нажатий за сессию 3 с пишет в лог, какие данные машины поменялись
+-- (signal_data): по ним потом можно читать настоящее состояние.
+-- Игрок сам щёлкнул «[», «]» или «O» — бот их больше не трогает до нового запуска: иначе
+-- его следующее «выключить» включило бы то, что игрок уже выключил.
+local Signals = {side = nil, hazard = false, queue = {}, down = {}, ours = {}, watchLeft = 4}
+Signals.KEYS = {left = "[", right = "]", hazard = "o"}
+Signals.ON, Signals.OFF = 30, 12     -- поворот впереди круче ON° — включаем; путь ровнее OFF° — гасим
+Signals.NEAR, Signals.FAR = 25, 45   -- на сколько метров пути вперёд смотрим (растёт со скоростью)
+Signals.LONGEST = 25000              -- дольше этого поворотник не держим
+
+-- Клавиши по одной: нажать, через 80 мс отпустить, следующую — не раньше чем через 250 мс.
+function Signals.keys(now)
+    for key, at in pairs(Signals.down) do
+        if now >= at then
+            read("dfEmulateKey", key, false)
+            Signals.down[key] = nil
+        end
+    end
+    if #Signals.queue == 0 or next(Signals.down) or elapsed(now, Signals.lastTap) < 250 then return end
+    local key = table.remove(Signals.queue, 1)
+    local ok = read("dfEmulateKey", key, true) == true
+    Signals.lastTap, Signals.ours[key] = now, now
+    if ok then Signals.down[key] = now + 80 end
+    if Signals.watchLeft > 0 then
+        Signals.watchLeft = Signals.watchLeft - 1
+        Signals.watchUntil = now + 3000
+    end
+    emit("signal_key", {key = key, ok = ok}, true)
+end
+
+function Signals.tap(key, now)
+    Signals.queue[#Signals.queue + 1] = key
+    Signals.keys(now)
+end
+
+function Signals.set(side, now, why)
+    if Signals.manual or Signals.side == side then return end
+    if Signals.side then Signals.tap(Signals.KEYS[Signals.side], now) end
+    if side then Signals.tap(Signals.KEYS[side], now) end
+    Signals.side, Signals.since, Signals.calm = side, now, nil
+    emit("signal", {side = side or "off", why = why or NULL}, true)
+end
+
+function Signals.setHazard(on, now)
+    if Signals.manual or Signals.hazard == on then return end
+    Signals.tap(Signals.KEYS.hazard, now)
+    Signals.hazard = on
+    emit("signal", {hazard = on}, true)
+end
+
+-- Самый крутой поворот пути на участке [from, to] м впереди относительно курса пути у
+-- машины. Плюс — налево: курс в MTA растёт против часовой.
+function Signals.turnAhead(frame, from, to)
+    if not frame or Path.n < 2 then return 0 end
+    local best = 0
+    for d = from, to, 5 do
+        local x1, y1, i = Path.at(frame.s + d, frame.i)
+        local x2, y2 = Path.at(frame.s + d + 3, i)
+        if (x2 - x1) ^ 2 + (y2 - y1) ^ 2 > 0.25 then
+            local turn = angle(bearingTo(x2 - x1, y2 - y1) - frame.heading)
+            if math.abs(turn) > math.abs(best) then best = turn end
+        end
+    end
+    return best
+end
+
+-- Каждый кадр: включить перед поворотом, погасить, когда путь впереди ровный и машина
+-- встала по нему (700 мс подряд). На светофоре перед поворотом поворотник горит: путь
+-- впереди тот же.
+function Signals.update(now, context, heading)
+    Signals.keys(now)
+    if Signals.manual then return end
+    if not state.bot or not state.signals then
+        if Signals.side then Signals.set(nil, now, state.bot and "выключены в панели" or "бот не ведёт") end
+        return
+    end
+    local frame = Path.frame
+    if not frame or not frame.near then
+        if Signals.side and elapsed(now, Signals.since) >= Signals.LONGEST then
+            Signals.set(nil, now, "дольше 25 с")
+        end
+        return
+    end
+    local far = clamp(toMs(context.speed or 0) * 4, Signals.NEAR, Signals.FAR)
+    local turn = Signals.turnAhead(frame, 0, far)
+    local side = turn > 0 and "left" or "right"
+    if not Signals.side then
+        if math.abs(turn) >= Signals.ON then
+            Signals.set(side, now, string.format("поворот %.0f°", turn))
+        end
+        return
+    end
+    if side ~= Signals.side and math.abs(turn) >= Signals.ON then
+        Signals.set(side, now, "сразу поворот в другую сторону")
+        return
+    end
+    local settled = math.abs(turn) < Signals.OFF and finite(heading)
+        and math.abs(angle(frame.heading - heading)) < Signals.OFF
+    if settled then
+        Signals.calm = Signals.calm or now
+        if elapsed(now, Signals.calm) >= 700 then Signals.set(nil, now, "поворот пройден") end
+    else
+        Signals.calm = nil
+    end
+    if Signals.side and elapsed(now, Signals.since) >= Signals.LONGEST then
+        Signals.set(nil, now, "дольше 25 с")
+    end
+end
+
+-- Игрок сам нажал поворотник или аварийку (свои нажатия бота узнаём по времени).
+function Signals.onKey(key, now)
+    for _, k in pairs(Signals.KEYS) do
+        if key == k then
+            if elapsed(now, Signals.ours[key]) > 400 and not Signals.manual then
+                Signals.manual = true
+                Signals.side, Signals.hazard, Signals.queue = nil, false, {}
+                emit("signal", {manual = key}, true)
+            end
+            return
+        end
+    end
+end
+
+-- === остановка при ДТП ===
+-- Удар машиной (сильный), игроком или пешеходом, пока ведёт бот: сирена, бот выключается,
+-- тормозит до полной остановки, держит ручник и включает аварийку. Стоит, пока игрок не
+-- разберётся: «Запустить бота» гасит аварийку и продолжает рейс с этого места; руль или газ
+-- от игрока отдают машину ему. Автономия в это время бота не запускает — раньше она сразу
+-- увозила машину с места ДТП. Функции — ниже, после startBot.
+local Crash = {holding = false}
+Crash.FORCE = 60   -- касание машиной слабее этого — не ДТП (трение в пробке, подпёрли сзади)
+Crash.WALK = 5     -- игрока или пешехода засчитываем уже с этой скорости (внутренние км/ч)
+
 -- === команды панели ===
 
 local function trigger(event, ...)
@@ -3572,6 +4331,10 @@ end
 
 local function startBot()
     if state.bot then return end
+    -- После ДТП: аварийку, которую включил бот, гасим — рейс продолжается с этого места.
+    Crash.holding, Crash.handsOff = false, nil
+    Signals.manual = nil
+    Signals.setHazard(false, getTickCount())
     controller:reset()
     state.bot = true
     state.tripStart = getTickCount()
@@ -3586,8 +4349,10 @@ local function startBot()
     -- Через "and" нельзя: множественный возврат усечётся до одного значения.
     if vehicle then sx, sy = read("getElementPosition", vehicle) end
     state.waypointCursor = waypointStart(finite(sx) and finite(sy) and {x = sx, y = sy} or nil)
-    -- Запись включается сама: разбирать потом нечего, если бот ехал без телеметрии.
-    if not state.recording then
+    -- Запись включается сама: разбирать потом нечего, если бот ехал без телеметрии. Сняли
+    -- «Автозапись» — не включается: бот отлажен, покадровая телеметрия не всегда нужна.
+    -- События (ДТП, поворотники, заметки) в лог идут и без неё.
+    if not state.recording and state.autoRecord then
         state.recording = true
         state.autoRecording = true
         state.recordedRoute = nil
@@ -3595,7 +4360,7 @@ local function startBot()
         emit("record_begin", {version = VERSION, route = routeId() or NULL,
             auto = true, in_vehicle = occupied() ~= nil}, true)
     end
-    note("Бот запущен, запись включена")
+    note(state.recording and "Бот запущен, запись включена" or "Бот запущен")
 end
 
 local function selectRoute(id)
@@ -3605,6 +4370,69 @@ local function selectRoute(id)
     trigger("snowPlow:npc:route:select", id)
     note("Запрошен маршрут " .. id)
 end
+
+-- ДТП ли это: машина — только сильный удар, игрок или пешеход — и удар, и наезд на ходу.
+function Crash.qualifies(kind, force, speed)
+    force = finite(force) and force or 0
+    if kind == "vehicle" then return force >= Crash.FORCE end
+    return force >= Crash.FORCE or (finite(speed) and speed >= Crash.WALK)
+end
+
+function Crash.stop(now, who, kind, force)
+    stopBot("ДТП: столкновение с " .. who)
+    Crash.holding, Crash.handsOff, Crash.at = true, nil, now
+    Signals.setHazard(true, now)
+    local played = read("dfPlayAlertSignal") == true
+    read("outputChatBox", "#FF5555[PlowBot] #FFFFFFДТП: столкновение с " .. who
+        .. ". Стою на аварийке, «Запустить бота» — поеду дальше", 255, 255, 255, true)
+    note("ДТП: столкновение с " .. who .. ". Стою на аварийке — разберись и запусти бота")
+    emit("crash_stop", {kind = kind, played = played,
+        force = finite(force) and math.floor(force * 10 + 0.5) / 10 or NULL}, true)
+end
+
+-- Пока стоим: тормоз, пока машина катится вперёд, и всё время ручник. Тормоз на месте в GTA
+-- превращается в задний ход, поэтому на месте держит только ручник.
+function Crash.hold(now, context, vehicle)
+    if Crash.handsOff then return end
+    if not vehicle or not context.inVehicle then
+        Crash.release("водитель вышел из машины")
+        return
+    end
+    local forward = finite(context.forward) and context.forward or 0
+    local ok = applyControls({throttle = 0, steer = 0, handbrake = true,
+        brake = forward > 0.3 and 1 or 0})
+    if not ok then Crash.release("ошибка управления") end
+end
+
+-- Отдать машину игроку: тормоз и ручник больше не держим. ДТП при этом не закрыто —
+-- автономия бота не запустит, пока игрок сам не нажмёт «Запустить бота». Аварийку не
+-- трогаем: её погасит запуск бота или сам игрок.
+function Crash.release(why)
+    if not Crash.holding or Crash.handsOff then return end
+    Crash.handsOff = true
+    releaseControls()
+    emit("crash_release", {why = why}, true)
+    note("ДТП: машина у игрока — " .. why .. ". «Запустить бота» — продолжить рейс")
+end
+
+-- Закрыть ДТП без запуска бота (выключили «Останавливаться при ДТП»).
+function Crash.clear(why)
+    if not Crash.holding then return end
+    if not Crash.handsOff then releaseControls() end
+    Crash.holding, Crash.handsOff = false, nil
+    emit("crash_release", {why = why, cleared = true}, true)
+end
+
+-- Вход для главного цикла. У onFrame ровно 60 upvalue — предел Lua 5.1 в MTA (первая
+-- сборка 2.12.0 из-за этого не загрузилась: «has more than 60 upvalues»), поэтому ДТП и
+-- поворотники он зовёт через state, которым и так пользуется. Новое в onFrame — только так.
+-- true — держим машину после ДТП, и главный цикл управление не отпускает.
+function state.holdCrash(now, context, vehicle)
+    if not Crash.holding or Crash.handsOff then return false end
+    Crash.hold(now, context, vehicle)
+    return Crash.holding and not Crash.handsOff
+end
+state.updateSignals = Signals.update
 
 local function handleCommand(command, now)
     if type(command) ~= "string" then return end
@@ -3620,6 +4448,15 @@ local function handleCommand(command, now)
     elseif name == "autonomy" then
         state.autonomy = argument == "1"
         note(state.autonomy and "Автономность включена" or "Автономность выключена")
+    elseif name == "autorecord" then
+        state.autoRecord = argument == "1"
+        -- Сняли галочку — запись, которую включил сам бот, тоже гасим; включённую кнопкой
+        -- не трогаем.
+        if not state.autoRecord and state.recording and state.autoRecording then
+            handleCommand("record_stop", now)
+        end
+        note(state.autoRecord and "Автозапись включена: запись — при запуске бота"
+            or "Автозапись выключена: запись — только кнопкой")
     elseif name == "record_start" then
         state.recording = true
         -- Включённую руками запись бот сам не гасит.
@@ -3696,6 +4533,15 @@ local function handleCommand(command, now)
     elseif name == "debug" then
         state.debug = argument == "1"
         note(state.debug and "Отладка включена" or "Отладка выключена")
+    elseif name == "signals" then
+        state.signals = argument == "1"
+        if not state.signals then Signals.set(nil, now, "выключены в панели") end
+        note(state.signals and "Поворотники включены" or "Поворотники выключены")
+    elseif name == "dtp_stop" then
+        state.dtpStop = argument == "1"
+        if not state.dtpStop then Crash.clear("остановка при ДТП выключена") end
+        note(state.dtpStop and "При ДТП бот остановится и включит аварийку"
+            or "При ДТП бот не останавливается")
     elseif name == "save_waypoint" or name == "forget_waypoint" then
         local vehicle = jobVehicle() or occupied()
         local position, heading
@@ -3716,12 +4562,37 @@ local function handleCommand(command, now)
         waypointResize(tonumber(argument))
     elseif name == "editor" then
         state.editor = argument == "1"
-        if state.editor and not (state.editSel and WAYPOINTS[state.editSel]) then
+        -- Город эдитора по умолчанию — тот, где стоишь (чьё СТО ближе).
+        if state.editor and not state.editCity then
+            local position = carPosition()
+            if position then
+                local _, cityIndex = City.near(position.x, position.y)
+                editorCity(cityIndex)
+            end
+        end
+        if state.editor and not editorPoint() then
             local nearest = editorNearest()
             if nearest then editorSelect(nearest) end
         end
     elseif name == "wp_select" then
-        editorSelect(argument == "near" and editorNearest() or tonumber(argument))
+        if argument == "gate" or argument == "finish" then editorSelect(argument)
+        else editorSelect(argument == "near" and editorNearest() or tonumber(argument)) end
+    elseif name == "ed_city" then
+        editorCity(tonumber(argument))
+        local nearest = editorNearest()
+        state.editSel = nil
+        if nearest then editorSelect(nearest) end
+    elseif name == "ed_route" then
+        local route = tonumber(argument)
+        state.editRoute = route and route > 0 and route or nil
+    elseif name == "route_new" then
+        local cityIndex, route = argument:match("^(%d+):(%d+)$")
+        editorWork(tonumber(cityIndex), tonumber(route))
+    elseif name == "route_done" then
+        state.workRoute = nil
+        note("Создание маршрута закончено: новые метки — снова в маршрут рейса")
+    elseif name == "city_point" then
+        editorCityPoint(argument)
     elseif name == "wp_nudge" then
         local direction, step = argument:match("^(%a+):([%d%.]+)$")
         editorNudge(direction, step)
@@ -3731,6 +4602,8 @@ local function handleCommand(command, now)
         editorUndo()
     elseif name == "wp_order" then
         editorOrder(tonumber(argument))
+    elseif name == "wp_route" then
+        editorBindRoute()
     elseif name == "dump_waypoints" then
         waypointDump()
         note(string.format("Метки выгружены в лог: %d шт.", #WAYPOINTS))
@@ -4087,7 +4960,8 @@ function Auto.update(now, context)
     elseif stage == "drive" then
         if not inside then Auto.set(vehicle and "to_vehicle" or "to_npc", "не в машине") return end
         if Auto.window or state.finished then Auto.set("deliver") return end
-        if not state.bot then
+        -- После ДТП стоим, пока игрок не разберётся: сам бот не трогается.
+        if not state.bot and not Crash.holding then
             if context.route or #plan.items > 0 then startBot() end
         end
     elseif stage == "deliver" then
@@ -4303,6 +5177,10 @@ local function pushUi(context)
     bridge.update("best_route", best and tostring(best) or "--")
     bridge.update("speed_limit", string.format("%d", state.speedLimitSpeedo or 50))
     bridge.update("debug", state.debug and "1" or "0")
+    bridge.update("signals", state.signals and "1" or "0")
+    bridge.update("dtp_stop", state.dtpStop and "1" or "0")
+    bridge.update("dtp_hold", Crash.holding and "1" or "0")
+    bridge.update("autorecord", state.autoRecord and "1" or "0")
     bridge.update("waypoints", string.format("%d", #WAYPOINTS))
     bridge.update("waypoint_cursor", string.format("%d", math.min(state.waypointCursor or 1, #WAYPOINTS)))
     local lastIndex = state.lastWaypoint
@@ -4314,23 +5192,63 @@ local function pushUi(context)
     bridge.update("wp_file", state.marksFile or "")
     if state.editor then
         local position = carPosition()
-        local rows = {}
+        local function away(p)
+            return position and math.sqrt((p[1] - position.x) ^ 2 + (p[2] - position.y) ^ 2) or -1
+        end
+        -- Город эдитора: метки, маршруты, точки и светофоры — только его.
+        local cityIndex = state.editCity or 0
+        local city = City.list[cityIndex]
+        local names = {}
+        for i, c in ipairs(City.list) do names[i] = c.name end
+        bridge.update("ed_cities", table.concat(names, "|"))
+        bridge.update("ed_city", tostring(cityIndex))
+        local rows, counts = {}, {}
         for index, point in ipairs(WAYPOINTS) do
-            local d = position and math.sqrt((point[1] - position.x) ^ 2
-                + (point[2] - position.y) ^ 2) or -1
-            rows[#rows + 1] = string.format("%d,%g,%.0f,%s", index, point[4] or K.WAYPOINT_MID, d,
-                point[5] and tostring(point[5]) or "-")
+            local _, at = City.ofMark(point)
+            if at == cityIndex then
+                if point[5] then counts[point[5]] = (counts[point[5]] or 0) + 1 end
+                if not state.editRoute or point[5] == state.editRoute or not point[5] then
+                    rows[#rows + 1] = string.format("%d,%g,%.0f,%s", index, point[4] or K.WAYPOINT_MID,
+                        away(point), point[5] and tostring(point[5]) or "-")
+                end
+            end
         end
         -- Строка ограничена 4 КБ; на 100 меток хватает с запасом.
         bridge.update("wp_list", table.concat(rows, ";"):sub(1, 4000))
-        local index = state.editSel
-        local point = index and WAYPOINTS[index]
+        -- Маршруты города: «номер:название:меток» — названия из ресурса.
+        local routes = {}
+        for _, id in ipairs(city and City.routes(cityIndex) or {}) do
+            local info = type(_G.tRoutes) == "table" and _G.tRoutes[id] or nil
+            local title = type(info) == "table" and tostring(info.name or "") or ""
+            routes[#routes + 1] = string.format("%d:%s:%d", id, (title:gsub("[:;|]", " ")), counts[id] or 0)
+        end
+        bridge.update("ed_routes", table.concat(routes, ";"))
+        bridge.update("ed_route", tostring(state.editRoute or 0))
+        bridge.update("ed_work", state.workRoute and string.format("%d", state.workRoute) or "")
+        -- Точки города: «роль,зона,расстояние».
+        local points = {}
+        for _, role in ipairs(City.ROLES) do
+            local p = city and city[role]
+            if p then points[#points + 1] = string.format("%s,%g,%.0f", role, p[4] or 0, away(p)) end
+        end
+        bridge.update("ed_points", table.concat(points, ";"))
+        -- Обученные светофоры города: «зелёное состояние,курс,расстояние».
+        local lights = {}
+        for _, light in ipairs(TRAFFIC) do
+            local _, at = City.near(light[1], light[2])
+            if at == cityIndex then
+                lights[#lights + 1] = string.format("%d,%.0f,%.0f", light[3] or 0, light[4] or 0, away(light))
+            end
+        end
+        bridge.update("ed_lights", table.concat(lights, ";"))
+        -- Выбранное: «номер|x|y|курс|зона|маршрут|расстояние|отмен|подпись»; у точки города номер 0.
+        local sel = state.editSel
+        local point, label = editorPoint(sel)
         if point then
-            local d = position and math.sqrt((point[1] - position.x) ^ 2
-                + (point[2] - position.y) ^ 2) or -1
-            bridge.update("wp_edit", string.format("%d|%.2f|%.2f|%.1f|%g|%s|%.0f|%d", index,
-                point[1], point[2], point[3] or 0, point[4] or K.WAYPOINT_MID,
-                point[5] and tostring(point[5]) or "-", d, #(state.editUndo or {})))
+            bridge.update("wp_edit", string.format("%d|%.2f|%.2f|%.1f|%g|%s|%.0f|%d|%s",
+                type(sel) == "number" and sel or 0, point[1], point[2], point[3] or 0,
+                point[4] or K.WAYPOINT_MID, type(sel) == "number" and point[5] and tostring(point[5]) or "-",
+                away(point), #(state.editUndo or {}), type(sel) == "string" and sel or label))
         else
             bridge.update("wp_edit", "")
         end
@@ -4795,7 +5713,7 @@ local function onFrame()
         state.pathRail = step ~= nil and step.rail ~= nil
         -- Руль — на точку пути в ~1 с впереди. Рельсы депо (выезд, въезд) — по-старому.
         if step and not step.rail and frame and frame.near then
-            local ax, ay, lead = Path.aim(frame.s, context.speed)
+            local ax, ay, lead = Path.steerAim(frame, position, heading, context.speed)
             step.aim = {x = ax, y = ay, z = position.z}
             context.pathLead = lead
             context.pathSpeed = Path.speedAhead(frame.s, context.speed)
@@ -4865,6 +5783,18 @@ local function onFrame()
             -- последней серверной точки. Предела в 200 м здесь нет — метки и есть путь.
             local rest, restGap, restIndex, aim, followUp, restFinal, steer
             local step = position and #plan.items > 0 and planStep(position, heading, nil, nil, context.speed) or nil
+            -- Записанный проезд целиком знает и въезд: руль — на точку его линии впереди, как на
+            -- самом маршруте, скорость — по изгибам линии.
+            if step and plan.full then
+                state.pathSlot = step.item.slot or state.pathSlot
+                local frame = context.pathFrame
+                if not step.rail and frame and frame.near then
+                    local ax, ay, lead = Path.steerAim(frame, position, heading, context.speed)
+                    step.aim = {x = ax, y = ay, z = position.z}
+                    context.pathLead = lead
+                    context.pathSpeed = Path.speedAhead(frame.s, context.speed)
+                end
+            end
             -- Въезд в депо после сдачи маршрута — тоже рельсы, со сдвигом мимо ворот.
             applyStepShift(step, position, heading, context)
             if step and step.item.kind == "mark" then
@@ -4904,6 +5834,7 @@ local function onFrame()
                         and context.forward < -0.8,
                     yield = elapsed(now, state.yieldAt) < 2500,
                     sharp = step ~= nil and step.sharp == true,
+                    pathSpeed = context.pathSpeed,
                     gapLeft = context.gapLeft, gapRight = context.gapRight,
                     sideLeft = context.sideLeft, sideRight = context.sideRight,
                     light = context.light, limit = state.speedLimit,
@@ -4933,6 +5864,10 @@ local function onFrame()
                     -- Место сдачи: стоим на тормозе до полного нуля, потом сигнал.
                     state.status = string.format("Финиш: торможу до нуля (%d)",
                         math.floor(context.speed or 0))
+                elseif not restIndex then
+                    -- Точка города (въезд, финиш) — без номера.
+                    state.status = string.format("Маршрут сдан, еду: %s, %d м",
+                        context.waypointKind or "точка города", math.floor(restGap))
                 else
                     state.status = string.format("Маршрут сдан, иду по меткам: #%d/%d, %d м",
                         restIndex, #WAYPOINTS, math.floor(restGap))
@@ -5104,9 +6039,11 @@ local function onFrame()
                 if not ok then stopBot("ошибка управления: " .. tostring(failedName)) end
             end
         end
-    elseif state.owned then
+    -- ДТП и поворотники — через state: у onFrame предел upvalue (см. state.holdCrash).
+    elseif not state.holdCrash(now, context, vehicle) and state.owned then
         releaseControls()
     end
+    state.updateSignals(now, context, heading)
 
     if state.recording then
         recordSample(now, context, position, heading, frozen)
@@ -5163,8 +6100,14 @@ end
 -- Метки проезда: столбик в центре, кольцо по радиусу зоны и номер над меткой. Рисуются
 -- и без бота. Высоту берём от земли под самой меткой, а не от машины: издалека кольцо
 -- иначе висело в воздухе или уходило под асфальт.
+-- Землю щупаем сначала чуть выше машины: зонд с 30 м над ней первым ловил крышу, крону,
+-- навес или фонарь, и при сдвиге метки эдитором на полметра кольцо прыгало вверх-вниз
+-- (депо Мирного, 03.10.2026), хотя высоты у метки нет. Высокий зонд — только запасной,
+-- для далёкой метки на подъёме, где низкий начинается уже под асфальтом.
 local function markGround(point, origin)
-    local ground = read("getGroundPosition", point[1], point[2], origin.z + 30)
+    local ground = read("getGroundPosition", point[1], point[2], origin.z + 2)
+    if finite(ground) and ground > origin.z - 6 and ground <= origin.z + 2 then return ground end
+    ground = read("getGroundPosition", point[1], point[2], origin.z + 30)
     if finite(ground) and math.abs(ground - origin.z) < 40 then return ground end
     return origin.z - 1
 end
@@ -5203,6 +6146,65 @@ local function drawWaypoints(origin)
             if finite(sx) and finite(sy) then
                 read("dxDrawText", string.format("#%d  %g м", index, radius), sx, sy, sx, sy,
                     colour, active and 1.6 or 1.2, "default-bold", "center", "bottom")
+            end
+        end
+    end
+    -- Точки города — не метки: свой цвет, без номера. Выбранная в эдиторе — жёлтая.
+    for _, city in ipairs(City.list) do
+        for _, role in ipairs(City.ROLES) do
+            local point = city[role]
+            if point and math.sqrt((point[1] - origin.x) ^ 2 + (point[2] - origin.y) ^ 2) < 150 then
+                local chosen = state.editor and state.editSel == role
+                    and City.list[state.editCity or 0] == city
+                local colour = chosen and rgba(255, 210, 90, 235)
+                    or role == "gate" and rgba(255, 90, 210, 220) or rgba(255, 80, 80, 220)
+                local z = markGround(point, origin)
+                read("dxDrawLine3D", point[1], point[2], z, point[1], point[2], z + 4, colour, 5)
+                local px, py
+                for step = 0, 24 do
+                    local a = step / 24 * math.pi * 2
+                    local x, y = point[1] + math.cos(a) * point[4], point[2] + math.sin(a) * point[4]
+                    if px then read("dxDrawLine3D", px, py, z + 0.2, x, y, z + 0.2, colour, 3) end
+                    px, py = x, y
+                end
+                local sx, sy = read("getScreenFromWorldPosition", point[1], point[2], z + 4.4)
+                if finite(sx) and finite(sy) then
+                    read("dxDrawText", city.name .. (role == "gate" and ": выезд/въезд" or ": финиш"),
+                        sx, sy, sx, sy, colour, 1.2, "default-bold", "center", "bottom")
+                end
+            end
+        end
+    end
+    -- Обученные светофоры — в эдиторе видно, какие перекрёстки бот знает: голубой столбик,
+    -- стрелка — курс, с которым его учили, и какое состояние у него «зелёное».
+    if state.editor then
+        for _, light in ipairs(TRAFFIC) do
+            if math.sqrt((light[1] - origin.x) ^ 2 + (light[2] - origin.y) ^ 2) < 150 then
+                local colour = rgba(110, 200, 255, 230)
+                local z = markGround(light, origin)
+                read("dxDrawLine3D", light[1], light[2], z, light[1], light[2], z + 5, colour, 5)
+                local r = math.rad(light[4] or 0)
+                read("dxDrawLine3D", light[1], light[2], z + 0.3, light[1] - math.sin(r) * 4,
+                    light[2] + math.cos(r) * 4, z + 0.3, colour, 4)
+                local sx, sy = read("getScreenFromWorldPosition", light[1], light[2], z + 5.4)
+                if finite(sx) and finite(sy) then
+                    read("dxDrawText", string.format("светофор, зелёный = %d", light[3] or 0), sx, sy,
+                        sx, sy, colour, 1.1, "default-bold", "center", "bottom")
+                end
+            end
+        end
+    end
+    -- Выученные удары: оранжевый крест в месте касания и число раз.
+    for _, b in ipairs(Bumps.list) do
+        if math.sqrt((b[1] - origin.x) ^ 2 + (b[2] - origin.y) ^ 2) < 150 then
+            local colour = rgba(255, 150, 40, 230)
+            local z = markGround(b, origin) + 0.3
+            read("dxDrawLine3D", b[1] - 0.7, b[2] - 0.7, z, b[1] + 0.7, b[2] + 0.7, z, colour, 4)
+            read("dxDrawLine3D", b[1] - 0.7, b[2] + 0.7, z, b[1] + 0.7, b[2] - 0.7, z, colour, 4)
+            local sx, sy = read("getScreenFromWorldPosition", b[1], b[2], z + 1.2)
+            if finite(sx) and finite(sy) then
+                read("dxDrawText", string.format("удар ×%d", b[3]), sx, sy, sx, sy, colour, 1.1,
+                    "default-bold", "center", "bottom")
             end
         end
     end
@@ -5381,15 +6383,27 @@ end)
 hook("onClientVehicleExit", root, function(player)
     if player == localPlayer and state.bot then stopBot("выход из машины") end
 end)
+-- «[», «]», «O» от игрока — он сам управляет поворотниками. Руль или газ, пока бот стоит
+-- после ДТП, — игрок забирает машину себе (ДТП при этом не закрыто).
+hook("onClientKey", root, function(key, pressed)
+    if not pressed then return end
+    if read("isChatBoxInputActive") == true or read("isConsoleActive") == true then return end
+    if read("dfMenuOpen") == true then return end
+    Signals.onKey(key, getTickCount())
+    if Crash.holding and (key == "w" or key == "s" or key == "a" or key == "d"
+        or key == "arrow_u" or key == "arrow_d" or key == "arrow_l" or key == "arrow_r") then
+        Crash.release("руль у игрока")
+    end
+end)
 
 -- Удары: место, где человек задел бордюр или машину, — это узкое место маршрута.
-hook("onClientVehicleCollision", root, function(collider, force)
+hook("onClientVehicleCollision", root, function(collider, force, _, cx, cy)
     local vehicle = jobVehicle()
     if not vehicle or source ~= vehicle then return end
     -- ДТП — как у самолёта (PilotTelemetry): пока машину ведёт бот, удар о машину, игрока
     -- или пешехода — сирена и красная строка в чат. Столб и бордюр — не ДТП. Одну и ту же
     -- машину считаем раз в 1.5 с (трение даёт событие каждый кадр), сирену — не чаще раза
-    -- в 30 с.
+    -- в 30 с. С «Останавливаться при ДТП» настоящий удар ещё и останавливает бота (Crash).
     if state.bot and valid(collider) then
         local kind = read("getElementType", collider)
         local who = ({vehicle = "машиной", player = "игроком", ped = "пешеходом"})[kind]
@@ -5397,7 +6411,13 @@ hook("onClientVehicleCollision", root, function(collider, force)
         state.crashContacts = state.crashContacts or setmetatable({}, {__mode = "k"})
         if who and elapsed(now, state.crashContacts[collider]) >= 1500 then
             state.crashContacts[collider] = now
-            if elapsed(now, state.crashAlertAt) >= 30000 then
+            local vx, vy, vz = read("getElementVelocity", vehicle)
+            local speed = finite(vx) and finite(vy)
+                and math.sqrt(vx * vx + vy * vy + (finite(vz) and vz * vz or 0)) * 180 or nil
+            if state.dtpStop and Crash.qualifies(kind, force, speed) then
+                state.crashAlertAt = now
+                Crash.stop(now, who, kind, force)
+            elseif elapsed(now, state.crashAlertAt) >= 30000 then
                 state.crashAlertAt = now
                 local played = read("dfPlayAlertSignal") == true
                 read("outputChatBox", "#FF5555[PlowBot] #FFFFFFДТП: столкновение с " .. who,
@@ -5418,6 +6438,24 @@ hook("onClientVehicleCollision", root, function(collider, force)
             if (cx - x) * -math.sin(r) + (cy - y) * math.cos(r) > 1 then
                 state.yieldAt = getTickCount()
             end
+        end
+    end
+    -- Обучение: бот задел неподвижное (столб, бордюр, стену — не машину и не человека) — место
+    -- касания запоминаем насовсем. Трение даёт событие каждый кадр: то же место в пределах 2 м
+    -- за 2 с — один удар, и не чаще раза в полсекунды.
+    if state.bot and finite(cx) and finite(cy) then
+        local kind = valid(collider) and read("getElementType", collider) or nil
+        local now = getTickCount()
+        local same = state.bumpX and elapsed(now, state.bumpAt) < 2000
+            and (state.bumpX - cx) ^ 2 + (state.bumpY - cy) ^ 2 < 4
+        if kind ~= "vehicle" and kind ~= "player" and kind ~= "ped" and not same
+            and elapsed(now, state.bumpAt) >= 500 then
+            state.bumpAt, state.bumpX, state.bumpY = now, cx, cy
+            local b = Bumps.learn(cx, cy)
+            emit("bump_learned", {x = round(cx), y = round(cy), hits = b[3], total = #Bumps.list,
+                force = finite(force) and round(force, 1) or NULL}, true)
+            note(string.format("Удар выучен: здесь запас +%.1f м (раз %d)", Bumps.margin(b), b[3]))
+            marksSave("удар выучен")
         end
     end
     if not state.recording then return end
@@ -5531,6 +6569,13 @@ hook("onClientElementDataChange", root, function(key, old, new)
     emit("autonomy_data", {key = tostring(key), old = tostring(old), new = tostring(new),
         who = source == localPlayer and "player" or "vehicle"}, true)
 end)
+-- Так же после первых нажатий поворотника и аварийки: где сервер держит их состояние.
+hook("onClientElementDataChange", root, function(key, old, new)
+    if not Signals.watchUntil or getTickCount() > Signals.watchUntil then return end
+    if source ~= localPlayer and source ~= jobVehicle() then return end
+    emit("signal_data", {key = tostring(key), old = tostring(old), new = tostring(new),
+        who = source == localPlayer and "player" or "vehicle"}, true)
+end)
 
 local cleanup
 cleanup = function()
@@ -5538,6 +6583,7 @@ cleanup = function()
     state.closed = true
     stopBot("выгрузка скрипта")
     releaseControls()
+    for key in pairs(Signals.down) do read("dfEmulateKey", key, false) end
     Auto.stopWalk()
     read("dfSetAlertMonitorEnabled", false)
     flush(true)

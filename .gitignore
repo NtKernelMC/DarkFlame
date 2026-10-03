@@ -81,3 +81,7 @@ Testing/
 .cache/
 /RE
 /.codex-temp-dia2dump
+
+# design-preview: снимки UI-теста и его сборка — локальные
+design-preview/renders/*.bmp
+design-preview/test-build/

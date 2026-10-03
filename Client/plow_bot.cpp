@@ -1,4 +1,5 @@
 #include "plow_bot.h"
+#include "ui_widgets.h"
 #include "embedded_lua_runtime.h"
 #include "../Shared/runtime_log.h"
 
@@ -39,6 +40,8 @@ std::mutex g_loaderMutex;
 LoaderInfo g_loader;
 std::atomic_bool g_reloadRequest{};
 std::atomic_bool g_autoReload{true};
+std::atomic_bool g_autoRecord{true};
+std::wstring g_settingsPath;
 
 struct LogBatch
 {
@@ -287,6 +290,30 @@ bool WriteMarksFile(const std::wstring& path, std::string_view text, std::string
     return ok;
 }
 
+void LoadSettings()
+{
+    std::wstring path;
+    {
+        std::scoped_lock lock(g_marksMutex);
+        path = g_settingsPath;
+    }
+    std::string text, error;
+    if(!path.empty() && ReadMarksFile(path, text, error))
+        g_autoRecord.store(text.find("AUTORECORD=0") == std::string::npos);
+}
+
+void SaveSettings()
+{
+    std::wstring path;
+    {
+        std::scoped_lock lock(g_marksMutex);
+        path = g_settingsPath;
+    }
+    std::string error;
+    if(!path.empty())
+        WriteMarksFile(path, g_autoRecord.load() ? "AUTORECORD=1\n" : "AUTORECORD=0\n", error);
+}
+
 int PlowMarks(void* lua)
 {
     size_t actionSize{}, textSize{};
@@ -393,7 +420,7 @@ bool PlowBotBusy()
         const auto found = g_state.find(key);
         return found != g_state.end() && found->second == "1";
     };
-    return flag("loaded") && (flag("bot") || flag("autonomy"));
+    return flag("loaded") && (flag("bot") || flag("autonomy") || flag("dtp_hold"));
 }
 
 std::string PlowScriptVersion(std::string_view code)
@@ -419,7 +446,9 @@ void InitializePlowBot()
         {
             std::scoped_lock marksLock(g_marksMutex);
             g_marksPath = path + L"PlowMarks.txt";
+            g_settingsPath = path + L"PlowBot.cfg";
         }
+        LoadSettings();
         path += L"PlowBot.log";
         const int bytes = WideCharToMultiByte(CP_UTF8, 0, path.data(),
             static_cast<int>(path.size()), nullptr, 0, nullptr, nullptr);
@@ -483,6 +512,7 @@ void DrawPlowBot(ImVec2 position, ImVec2 size, float scale)
     const bool ready = online && state["resource_ready"] == "1";
     const bool bot = online && state["bot"] == "1";
     const bool spray = online && state["spray"] == "1";
+    const bool crashHold = online && !bot && state["dtp_hold"] == "1";
 
     static bool editorPage = false;
     static ULONGLONG editorTick{};
@@ -490,6 +520,14 @@ void DrawPlowBot(ImVec2 position, ImVec2 size, float scale)
     {
         editorTick = GetTickCount64();
         Queue(editorPage ? "editor:1" : "editor:0");
+    }
+    static ULONGLONG recordTick{};
+    const bool autoRecord = g_autoRecord.load();
+    if(online && !state["autorecord"].empty() && (state["autorecord"] == "1") != autoRecord
+        && GetTickCount64() - recordTick > 700)
+    {
+        recordTick = GetTickCount64();
+        Queue(autoRecord ? "autorecord:1" : "autorecord:0");
     }
 
     std::array<std::string, 16> values;
@@ -506,25 +544,27 @@ void DrawPlowBot(ImVec2 position, ImVec2 size, float scale)
     }
 
     const ImU32 white = IM_COL32(235, 232, 247, 255);
-    const ImU32 muted = IM_COL32(135, 126, 159, 255);
+    const ImU32 muted = IM_COL32(157, 148, 179, 255);
     const ImU32 violet = IM_COL32(190, 100, 255, 255);
     const ImU32 mint = IM_COL32(106, 234, 194, 255);
     const ImU32 amber = IM_COL32(255, 198, 109, 255);
     const ImU32 red = IM_COL32(255, 104, 141, 255);
     const ImU32 statusColor = !online ? muted : bot ? mint : violet;
-    const float width = size.x / scale;
-    constexpr float vertical = 1.22f;
+    static int page = 0;
+    editorPage = page == 2;
+
     ImGui::SetCursorScreenPos(position);
-    ImGui::PushFont(ImGui::GetFont(), 20 * scale);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10 * scale, 5 * scale));
+    ImGui::PushFont(ImGui::GetFont(), 19 * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16 * scale, 12 * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12 * scale, 6 * scale));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6 * scale);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12 * scale);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10 * scale, 8 * scale));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(9, 8, 17, 255));
-    ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(51, 35, 74, 255));
-    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(39, 26, 58, 255));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(73, 39, 104, 255));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10 * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12 * scale, 8 * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 12 * scale);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(18, 15, 29, 255));
+    ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(61, 42, 82, 255));
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(51, 33, 73, 255));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(84, 43, 116, 255));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(108, 46, 155, 255));
     ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(12, 10, 24, 255));
     ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(49, 31, 70, 255));
@@ -532,283 +572,139 @@ void DrawPlowBot(ImVec2 position, ImVec2 size, float scale)
     ImGui::PushStyleColor(ImGuiCol_CheckMark, violet);
     ImGui::PushStyleColor(ImGuiCol_Text, white);
     ImGui::PushStyleColor(ImGuiCol_TextDisabled, muted);
-    ImGui::PushStyleColor(ImGuiCol_Separator, IM_COL32(47, 33, 64, 255));
-    ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, IM_COL32(9, 8, 17, 255));
-    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, IM_COL32(58, 43, 76, 255));
-    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, IM_COL32(89, 54, 117, 255));
+    ImGui::PushStyleColor(ImGuiCol_Separator, IM_COL32(61, 42, 82, 255));
+    ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(76, 36, 107, 255));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(94, 43, 128, 255));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32(128, 56, 180, 255));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, IM_COL32(12, 10, 24, 255));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, IM_COL32(76, 51, 99, 255));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, IM_COL32(112, 63, 151, 255));
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive, IM_COL32(134, 67, 176, 255));
-    ImGui::BeginChild("##plow_bot", size, ImGuiChildFlags_Borders);
-    const auto origin = ImGui::GetWindowPos();
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    const auto point = [&](float x, float y)
+    ImGui::BeginChild("##plow_bot", size, ImGuiChildFlags_None,
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+    const auto colored = [](ImU32 color, const std::string& value)
     {
-        return ImVec2(origin.x + x * scale,
-            origin.y + y * scale * vertical - ImGui::GetScrollY());
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        ImGui::TextWrapped("%s", value.c_str());
+        ImGui::PopStyleColor();
     };
-    const auto at = [&](float x, float y)
+    const auto section = [&](const char* label)
     {
-        ImGui::SetCursorPos(ImVec2(x * scale, y * scale * vertical));
+        colored(muted, label);
+        ImGui::Separator();
     };
-    const auto text = [&](float x, float y, std::string_view label, float pixels,
-        ImU32 color, float wrap = 0.0f)
+    const auto action = [&](const char* label, const char* command, bool enabled = true,
+        float width = -1.0f)
     {
-        draw->AddText(ImGui::GetFont(), pixels * 1.15f * scale, point(x, y), color,
-            label.data(), label.data() + label.size(), wrap * scale);
-    };
-    const auto card = [&](float x, float y, float w, float h)
-    {
-        draw->AddRectFilled(point(x, y), point(x + w, y + h), IM_COL32(18, 15, 29, 255), 8 * scale);
-        draw->AddRect(point(x, y), point(x + w, y + h), IM_COL32(47, 33, 65, 255), 8 * scale);
-        draw->AddLine(point(x + 12, y), point(x + 45, y), IM_COL32(163, 75, 224, 145), 2 * scale);
-    };
-    const auto button = [&](const char* label, const char* command, float x, float y,
-        float w, float h, bool enabled)
-    {
-        at(x, y);
         ImGui::BeginDisabled(!enabled);
-        if(ImGui::Button(label, ImVec2(w * scale, h * scale * vertical))) Queue(command);
+        const bool pressed = ImGui::Button(label, ImVec2(width, 38 * scale));
+        if(pressed) Queue(command);
         ImGui::EndDisabled();
+        return pressed;
     };
-    const auto metric = [&](float x, float y, float w, std::string_view label,
-        std::string_view value, ImU32 color)
+    const auto line = [&](const std::string& value, ImU32 color)
     {
-        draw->AddRectFilled(point(x, y), point(x + w, y + 62), IM_COL32(13, 11, 22, 255), 6 * scale);
-        draw->AddRect(point(x, y), point(x + w, y + 62), IM_COL32(41, 29, 57, 255), 6 * scale);
-        text(x + 10, y + 8, label, 11, muted);
-        text(x + 10, y + 26, value, 22, color);
+        // Keep long live status strings on one line; the full value is available on hover.
+        const ImVec2 start = ImGui::GetCursorScreenPos();
+        const float available = ImGui::GetContentRegionAvail().x;
+        const bool clipped = ImGui::CalcTextSize(value.c_str()).x > available;
+        const float reserve = clipped ? ImGui::CalcTextSize("...").x : 0.0f;
+        auto* draw = ImGui::GetWindowDrawList();
+        draw->PushClipRect(start, ImVec2(start.x + std::max(0.0f, available - reserve),
+            start.y + ImGui::GetTextLineHeight()), true);
+        draw->AddText(start, color, value.c_str());
+        draw->PopClipRect();
+        if(clipped) draw->AddText(ImVec2(start.x + available - reserve, start.y), color, "...");
+        ImGui::Dummy(ImVec2(available, ImGui::GetTextLineHeight()));
+        if(clipped && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", value.c_str());
     };
 
-    draw->AddRectFilledMultiColor(point(12, 2), point(width - 12, 3),
-        IM_COL32(181, 76, 255, 0), IM_COL32(181, 76, 255, 0),
-        IM_COL32(181, 76, 255, 180), IM_COL32(181, 76, 255, 180));
-    text(18, 12, "ПОЛИВАЛКА", 28, white);
-    text(218, 22, editorPage ? "// ЭДИТОР МЕТОК" : "// ДОРОЖНАЯ СЛУЖБА", 13, violet);
+    // This header and navigation stay outside the independently scrolling panes.
+    ImGui::BeginChild("##plow_header", ImVec2(0, 100 * scale), ImGuiChildFlags_Borders,
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    if(ImGui::BeginTable("##plow_heading", 3, ImGuiTableFlags_SizingStretchProp))
+    {
+        ImGui::TableSetupColumn("title", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("autorecord", ImGuiTableColumnFlags_WidthFixed, 160 * scale);
+        ImGui::TableSetupColumn("record", ImGuiTableColumnFlags_WidthFixed, 268 * scale);
+        ImGui::TableNextColumn();
+        ImGui::PushFont(ImGui::GetFont(), 27 * scale);
+        colored(white, "ПОЛИВАЛКА");
+        ImGui::PopFont();
+        ImGui::SameLine(0, 24 * scale);
+        colored(crashHold ? red : statusColor, !online ? "OFFLINE" : bot ? "BOT ACTIVE"
+            : crashHold ? "CRASH HOLD" : "STANDBY");
+        ImGui::TableNextColumn();
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (38 * scale - ImGui::GetFrameHeight()) / 2);
+        bool autoRecordBox = autoRecord;
+        if(ImGui::Checkbox("Автозапись###plow_autorecord", &autoRecordBox))
+        {
+            g_autoRecord.store(autoRecordBox);
+            SaveSettings();
+        }
+        if(ImGui::IsItemHovered())
+            ImGui::SetTooltip("Включать запись телеметрии при запуске бота.\n"
+                "Без галочки запись — только кнопкой справа.");
+        ImGui::TableNextColumn();
+        const bool recording = online && state["recording"] == "1";
+        ImGui::PushStyleColor(ImGuiCol_Button, recording
+            ? IM_COL32(126, 34, 64, 255) : IM_COL32(51, 33, 73, 255));
+        action(recording ? "Остановить запись###plow_record" : "Записать телеметрию###plow_record",
+            recording ? "record_stop" : "record_start", online);
+        ImGui::PopStyleColor();
+        ImGui::EndTable();
+    }
+    line((state["route"].empty() ? "Маршрут не выбран" : state["route"]) + std::string("  /  ")
+        + (!online ? "Скрипт: " + loader.text
+            : state["status"].empty() ? "Готов к запуску" : state["status"]), muted);
+    ImGui::EndChild();
+
+    const char* pages[]{"Обзор", "Светофоры и метки", "Редактор меток"};
+    const float navWidth = (ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().ItemSpacing.x) / 3;
+    for(int i = 0; i < 3; ++i)
+    {
+        if(i) ImGui::SameLine();
+        ImGui::PushID(i);
+        ImGui::PushStyleColor(ImGuiCol_Button, page == i
+            ? IM_COL32(108, 46, 155, 255) : IM_COL32(31, 23, 45, 255));
+        if(ImGui::Button(pages[i], ImVec2(navWidth, 38 * scale))) page = i;
+        ImGui::PopStyleColor();
+        ImGui::PopID();
+    }
+    editorPage = page == 2;
+
+    const float bodyHeight = std::max(1.0f, ImGui::GetContentRegionAvail().y);
+    const float sidebarWidth = (size.x / scale < 1150 ? 300 : 340) * scale;
     if(!editorPage)
     {
-        const std::string route = state["route"].empty() ? "Маршрут не выбран" : state["route"];
-        text(470, 17, route, 18, white);
-    }
-    else
-    {
-        at(width - 580, 12);
-        if(ImGui::Button("<  К боту###plow_close_editor", ImVec2(170 * scale, 34 * scale * vertical)))
-            editorPage = false;
-    }
-    draw->AddCircleFilled(point(width - 169, 25), 3 * scale, statusColor);
-    text(width - 158, 17, !online ? "OFFLINE" : bot ? "BOT ACTIVE" : "STANDBY", 16, statusColor);
-    const std::string status = !online ? "Скрипт: " + loader.text
-        : state["status"].empty() ? "Готов к запуску" : state["status"];
-    text(18, 44, status, 12, muted);
-
-    {
-        const bool recording = state["recording"] == "1";
+        ImGui::BeginChild("##plow_controls", ImVec2(sidebarWidth, bodyHeight), ImGuiChildFlags_Borders);
+        section("УПРАВЛЕНИЕ");
+        colored(crashHold ? red : statusColor, crashHold ? "ДТП: стою на аварийке"
+            : bot ? "Бот работает" : ready ? "Готов к запуску" : "Ожидание подключения");
+        ImGui::PushStyleColor(ImGuiCol_Button, bot
+            ? IM_COL32(126, 34, 64, 255) : IM_COL32(72, 38, 112, 255));
+        action(bot ? "Остановить бота###plow_toggle" : crashHold ? "Продолжить рейс###plow_toggle"
+            : "Запустить бота###plow_toggle", bot ? "bot_stop" : "bot_start", ready || bot);
+        ImGui::PopStyleColor();
         ImGui::BeginDisabled(!online);
-        if(recording)
-        {
-            ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(120, 30, 56, 255));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(146, 36, 68, 255));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(168, 42, 78, 255));
-        }
-        at(width - 400, 12);
-        if(ImGui::Button(recording ? "Остановить запись###plow_record"
-            : "Записывать телеметрию###plow_record", ImVec2(222 * scale, 34 * scale * vertical)))
-        {
-            Queue(recording ? "record_stop" : "record_start");
-        }
-        if(recording) ImGui::PopStyleColor(3);
-        ImGui::EndDisabled();
-    }
-
-    if(editorPage)
-    {
-        struct MarkRow
-        {
-            int index{};
-            std::string radius, distance, route;
-        };
-        std::vector<MarkRow> rows;
-        const auto split = [](const std::string& value, char separator)
-        {
-            std::vector<std::string> parts;
-            size_t from = 0;
-            while(from <= value.size())
-            {
-                const auto next = value.find(separator, from);
-                parts.push_back(value.substr(from, next == std::string::npos ? std::string::npos
-                    : next - from));
-                if(next == std::string::npos) break;
-                from = next + 1;
-            }
-            return parts;
-        };
-        if(online)
-        {
-            for(const auto& item : split(state["wp_list"], ';'))
-            {
-                const auto parts = split(item, ',');
-                if(parts.size() >= 4 && !parts[0].empty())
-                    rows.push_back({std::atoi(parts[0].c_str()), parts[1], parts[2], parts[3]});
-            }
-        }
-        // wp_edit: номер|x|y|курс|зона|маршрут|до неё|отмен
-        auto edit = online ? split(state["wp_edit"], '|') : std::vector<std::string>{};
-        edit.resize(8);
-        const int selected = edit[0].empty() ? 0 : std::atoi(edit[0].c_str());
-        const int undo = edit[7].empty() ? 0 : std::atoi(edit[7].c_str());
-        const auto distanceText = [](const std::string& value)
-        {
-            return value.empty() || value[0] == '-' ? std::string("--") : value + " м";
-        };
-
-        constexpr float listX = 16, listW = 380;
-        card(listX, 64, listW, 494);
-        text(listX + 16, 79, "МЕТКИ", 12, muted);
-        text(listX + listW - 80, 79, std::to_string(rows.size()) + " шт.", 12, amber);
-        ImGui::BeginDisabled(!online);
-        at(listX + 16, 100);
-        if(ImGui::Button("Выбрать ближайшую###plow_ed_near",
-            ImVec2((listW - 32) * scale, 32 * scale * vertical)))
-        {
-            Queue("wp_select:near");
-        }
-        ImGui::EndDisabled();
-        at(listX + 16, 142);
-        ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(108, 46, 155, 200));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(73, 39, 104, 255));
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32(128, 56, 180, 255));
-        ImGui::BeginChild("##plow_ed_list", ImVec2((listW - 32) * scale, 404 * scale * vertical));
-        const float rowFont = 15 * 1.15f * scale;
-        for(const auto& row : rows)
-        {
-            ImGui::PushID(row.index);
-            const bool active = row.index == selected;
-            if(ImGui::Selectable("##plow_ed_row", active, 0, ImVec2(0, 30 * scale)))
-                Queue("wp_select:" + std::to_string(row.index));
-            const ImVec2 min = ImGui::GetItemRectMin();
-            ImDrawList* rowDraw = ImGui::GetWindowDrawList();
-            const ImU32 color = active ? amber : white;
-            const std::string number = "#" + std::to_string(row.index);
-            const std::string zone = "зона " + row.radius + " м";
-            const std::string away = distanceText(row.distance);
-            rowDraw->AddText(ImGui::GetFont(), rowFont, ImVec2(min.x + 10 * scale, min.y + 5 * scale),
-                color, number.c_str());
-            rowDraw->AddText(ImGui::GetFont(), rowFont, ImVec2(min.x + 70 * scale, min.y + 5 * scale),
-                color, zone.c_str());
-            rowDraw->AddText(ImGui::GetFont(), rowFont, ImVec2(min.x + 220 * scale, min.y + 5 * scale),
-                muted, away.c_str());
-            ImGui::PopID();
-        }
-        if(rows.empty())
-            ImGui::TextDisabled(online ? "Меток нет: создай их на странице бота" : "Бот не подключён");
-        ImGui::EndChild();
-        ImGui::PopStyleColor(3);
-
-        const float editX = listX + listW + 16;
-        constexpr float editW = 440;
-        card(editX, 64, editW, 494);
-        text(editX + 16, 79, "ВЫБРАННАЯ МЕТКА", 12, muted);
-        const bool has = online && selected > 0;
-        if(has)
-        {
-            text(editX + 16, 98, "#" + edit[0], 34, amber);
-            text(editX + 150, 106, "зона " + edit[4] + " м", 22, white);
-            text(editX + 16, 148, "до неё " + distanceText(edit[6]) + "   курс " + edit[3]
-                + "   маршрут " + (edit[5] == "-" ? std::string("любой") : edit[5]), 12, muted,
-                editW - 32);
-        }
-        else
-        {
-            text(editX + 16, 106, online ? "Выбери метку в списке" : "Бот не подключён", 18, muted);
-        }
-        static int stepIndex = 1;
-        static const char* stepValue[4]{"0.25", "0.5", "1", "2"};
-        const auto nudge = [&](const char* label, const char* direction, float x, float y)
-        {
-            at(x, y);
-            if(ImGui::Button(label, ImVec2(128 * scale, 40 * scale * vertical)))
-                Queue(std::string("wp_nudge:") + direction + ":" + stepValue[stepIndex]);
-        };
-        ImGui::BeginDisabled(!has);
-        const float padX = editX + editW / 2 - 64;
-        nudge("Вперёд###plow_ed_fwd", "fwd", padX, 176);
-        nudge("Влево###plow_ed_left", "left", padX - 138, 222);
-        nudge("Вправо###plow_ed_right", "right", padX + 138, 222);
-        nudge("Назад###plow_ed_back", "back", padX, 268);
-        text(editX + 16, 324, "ШАГ", 11, muted);
-        for(int i = 0; i < 4; ++i)
-        {
-            at(editX + 64 + static_cast<float>(i) * 92, 320);
-            const std::string label = std::string(stepValue[i]) + " м###plow_ed_step" + std::to_string(i);
-            ImGui::RadioButton(label.c_str(), &stepIndex, i);
-        }
-        text(editX + 16, 362, "ЗОНА", 11, muted);
-        const float halfW = (editW - 42) / 2;
-        at(editX + 16, 380);
-        if(ImGui::Button("Меньше  -0.5 м###plow_ed_smaller", ImVec2(halfW * scale, 40 * scale * vertical)))
-            Queue("wp_radius:-0.5");
-        at(editX + 26 + halfW, 380);
-        if(ImGui::Button("Больше  +0.5 м###plow_ed_bigger", ImVec2(halfW * scale, 40 * scale * vertical)))
-            Queue("wp_radius:+0.5");
-        ImGui::EndDisabled();
-        ImGui::BeginDisabled(!online || undo == 0);
-        at(editX + 16, 434);
-        const std::string undoLabel = "Отменить последнюю правку (" + std::to_string(undo)
-            + ")###plow_ed_undo";
-        if(ImGui::Button(undoLabel.c_str(), ImVec2((editW - 32) * scale, 36 * scale * vertical)))
-            Queue("wp_undo");
-        ImGui::EndDisabled();
-        ImGui::BeginDisabled(!has);
-        at(editX + 16, 478);
-        if(ImGui::Button("Раньше по ходу###plow_ed_earlier", ImVec2(halfW * scale, 36 * scale * vertical)))
-            Queue("wp_order:-1");
-        at(editX + 26 + halfW, 478);
-        if(ImGui::Button("Позже по ходу###plow_ed_later", ImVec2(halfW * scale, 36 * scale * vertical)))
-            Queue("wp_order:1");
-        ImGui::EndDisabled();
-        text(editX + 16, 526, "Направления — как смотрит камера.", 11, muted, editW - 32);
-
-        const float helpX = editX + editW + 16;
-        const float helpW = width - helpX - 16;
-        card(helpX, 64, helpW, 494);
-        text(helpX + 16, 79, "КАК ПОЛЬЗОВАТЬСЯ", 12, muted);
-        text(helpX + 16, 102, "1. Выбери метку в списке или нажми «Выбрать ближайшую».\n"
-            "2. Двигай кнопками — метка переезжает в мире сразу.\n"
-            "3. Меняй зону: чем она больше, тем больше у бота места выбрать, где проехать.\n"
-            "4. Номер — порядок проезда. Новая метка сама встаёт по ходу маршрута; "
-            "поправить — «Раньше/Позже по ходу».\n\n"
-            "Пока открыт эдитор, метки видно в мире и без отладки: над каждой номер и зона, "
-            "выбранная — жёлтая, стрелка — куда ты ехал, когда её ставил.", 12, white, helpW - 32);
-        text(helpX + 16, 326, "ФАЙЛ МЕТОК", 12, muted);
-        const std::string fileInfo = state["wp_file"].empty() ? "--" : state["wp_file"];
-        text(helpX + 16, 348, fileInfo, 12,
-            fileInfo.find("не ") != std::string::npos ? red : mint, helpW - 32);
-        text(helpX + 16, 414, "Каждая правка сохраняется сама в PlowMarks.txt рядом с ботом. "
-            "Копия файла до первой правки за сессию — PlowMarks.bak.", 11, muted, helpW - 32);
-        button("Выгрузить в лог###plow_ed_dump", "dump_waypoints", helpX + 16, 500, helpW - 32, 34, online);
-    }
-    else
-    {
-        constexpr float leftX = 16, leftW = 300;
-        card(leftX, 64, leftW, 240);
-        text(leftX + 16, 79, "УПРАВЛЕНИЕ", 12, muted);
-        text(leftX + 206, 79, bot ? "РАБОТАЕТ" : ready ? "ГОТОВ" : "ЖДЁТ", 11, statusColor);
-        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(79, 24, 50, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(95, 29, 59, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(108, 33, 66, 255));
-        button(bot ? "Остановить бота###plow_bot" : "Запустить бота###plow_bot",
-            bot ? "bot_stop" : "bot_start", leftX + 16, 104, leftW - 32, 46, ready);
-        ImGui::PopStyleColor(3);
-        ImGui::BeginDisabled(!online);
-        at(leftX + 16, 164);
         bool autonomy = state["autonomy"] == "1";
         if(ImGui::Checkbox("Автономность###plow_autonomy", &autonomy))
             Queue(autonomy ? "autonomy:1" : "autonomy:0");
-        at(leftX + 160, 164);
         bool debug = state["debug"] == "1";
-        if(ImGui::Checkbox("Отладка###plow_debug", &debug))
-            Queue(debug ? "debug:1" : "debug:0");
-
-        text(leftX + 16, 206, "ОГРАНИЧИТЕЛЬ, ПО СПИДОМЕТРУ", 11, muted);
+        if(ImGui::Checkbox("Отладка###plow_debug", &debug)) Queue(debug ? "debug:1" : "debug:0");
+        bool signals = state["signals"] == "1";
+        if(ImGui::Checkbox("Поворотники###plow_signals", &signals))
+            Queue(signals ? "signals:1" : "signals:0");
+        if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Бот сам включает поворотник перед поворотом и гасит после");
+        bool dtpStop = state["dtp_stop"] == "1";
+        if(ImGui::Checkbox("Останавливаться при ДТП###plow_dtp", &dtpStop))
+            Queue(dtpStop ? "dtp_stop:1" : "dtp_stop:0");
+        if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Удар: сирена, полная остановка и аварийка.\n"
+                "«Продолжить рейс» — бот поедет дальше с этого места.");
+        colored(muted, "Лимит скорости по спидометру");
         static int limit = 50;
         static std::string lastLimit;
         if(lastLimit != state["speed_limit"] && !state["speed_limit"].empty())
@@ -816,90 +712,112 @@ void DrawPlowBot(ImVec2 position, ImVec2 size, float scale)
             lastLimit = state["speed_limit"];
             limit = std::atoi(lastLimit.c_str());
         }
-        at(leftX + 16, 224);
-        ImGui::SetNextItemWidth((leftW - 32) * scale);
-        if(ImGui::SliderInt("##plow_limit", &limit, 20, 90, "%d км/ч"))
+        ImGui::SetNextItemWidth(-1);
+        if(DarkFlameSliderInt("##plow_limit", &limit, 20, 90, "%d км/ч", scale))
         {
             Queue("speed_limit:" + std::to_string(limit));
             lastLimit = std::to_string(limit);
         }
         ImGui::EndDisabled();
-        text(leftX + 16, 262, spray ? "Установка включена" : "Установка выключена", 12,
-            spray ? mint : muted);
-
-        card(leftX, 316, leftW, 242);
-        text(leftX + 16, 331, "СКРИПТ БОТА", 12, muted);
+        colored(spray ? mint : muted, spray ? "Установка включена" : "Установка выключена");
+        ImGui::Spacing();
+        section("СКРИПТ БОТА");
         const ImU32 loadColor = loader.kind == PlowLoad::Loaded ? mint
-            : loader.kind == PlowLoad::Error ? red
-            : loader.kind == PlowLoad::Waiting ? muted : amber;
-        const char* loadTag = loader.kind == PlowLoad::Loaded ? "АВТО"
-            : loader.kind == PlowLoad::Error ? "ОШИБКА"
-            : loader.kind == PlowLoad::Pending ? "ОБНОВЛЕНИЕ"
-            : loader.kind == PlowLoad::Unloaded ? "ВЫГРУЖЕН" : "ЖДЁТ";
-        text(leftX + 176, 331, loadTag, 11, loadColor);
-        const std::string script = loader.version.empty() ? std::string("PlowBot.lua не прочитан")
-            : "PlowBot " + loader.version + "  ·  " + std::to_string((loader.bytes + 512) / 1024) + " КБ";
-        text(leftX + 16, 352, script, 16, white);
-        text(leftX + 16, 382, loader.text, 11, loadColor, leftW - 32);
-        at(leftX + 16, 462);
+            : loader.kind == PlowLoad::Error ? red : loader.kind == PlowLoad::Waiting ? muted : amber;
+        colored(white, loader.version.empty() ? "PlowBot.lua не прочитан"
+            : "PlowBot " + loader.version + "  /  " + std::to_string((loader.bytes + 512) / 1024) + " КБ");
+        colored(loadColor, loader.text);
         bool autoReload = g_autoReload.load();
-        if(ImGui::Checkbox("Подхватывать новую версию###plow_auto_reload", &autoReload))
-            g_autoReload.store(autoReload);
-        at(leftX + 16, 500);
+        if(ImGui::Checkbox("Автообновление###plow_auto_reload", &autoReload)) g_autoReload.store(autoReload);
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Подхватывать новую версию скрипта автоматически");
         if(ImGui::Button(loader.kind == PlowLoad::Unloaded ? "Загрузить скрипт###plow_reload"
-            : "Перезагрузить скрипт###plow_reload", ImVec2((leftW - 32) * scale, 40 * scale * vertical)))
-        {
-            g_reloadRequest.store(true);
-        }
+            : "Перезагрузить скрипт###plow_reload", ImVec2(-1, 38 * scale))) g_reloadRequest.store(true);
+        ImGui::EndChild();
+        ImGui::SameLine();
+    }
 
-        const float midX = leftX + leftW + 16;
-        constexpr float midW = 336;
-        card(midX, 64, midW, 494);
-        text(midX + 16, 79, "СВЕТОФОРЫ", 12, muted);
+    ImGui::BeginChild("##plow_workspace", ImVec2(0, bodyHeight), ImGuiChildFlags_Borders,
+        editorPage ? ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse : 0);
+    if(page == 0)
+    {
+        section("ТЕЛЕМЕТРИЯ");
+        static const char* labels[12]{"СКОРОСТЬ", "ТОЧКА", "ВОДА", "СВЕТОФОР",
+            "ДО ТОЧКИ", "ЗАПАС ВОДЫ", "РУЛЬ", "ГАЗ", "ПОМЕХА", "ВОДА, Л", "ЗАСТРЯЛ", "РЕЙСОВ"};
+        const int columns = ImGui::GetContentRegionAvail().x / scale < 650 ? 2 : 3;
+        if(ImGui::BeginTable("##plow_metrics", columns, ImGuiTableFlags_SizingStretchSame))
+        {
+            for(int i = 0; i < 12; ++i)
+            {
+                ImGui::TableNextColumn();
+                ImGui::PushID(i);
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(12, 10, 23, 255));
+                ImGui::BeginChild("metric", ImVec2(0, 78 * scale), ImGuiChildFlags_Borders,
+                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                ImGui::PushFont(ImGui::GetFont(), 13 * scale);
+                line(labels[i], muted);
+                ImGui::PopFont();
+                ImU32 color = values[i] == "--" ? muted : i == 0 ? mint : i == 2 ? violet : white;
+                if(i == 3 && values[i].rfind("КРАС", 0) == 0) color = red;
+                if(i == 3 && values[i].rfind("ЗЕЛ", 0) == 0) color = mint;
+                if(i == 5 && !values[i].empty() && values[i][0] == '-') color = red;
+                ImGui::PushFont(ImGui::GetFont(), 27 * scale);
+                line(values[i], color);
+                ImGui::PopFont();
+                ImGui::EndChild();
+                ImGui::PopStyleColor();
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        ImGui::Spacing();
+        if(ImGui::CollapsingHeader("Отчёт бота", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            if(!error.empty()) colored(red, error);
+            colored(white, state["report"].empty() ? "Бот ещё не присылал отчёт." : state["report"]);
+            if(!path.empty()) colored(muted, path);
+        }
+    }
+    else if(page == 1)
+    {
+        ImGui::BeginChild("##plow_lights_card", ImVec2(0, 0),
+            ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
+        section("СВЕТОФОРЫ");
         const bool lightsWork = state["traffic_working"] == "1";
-        const std::string lightNow = state["traffic_state"].empty() ? "--" : state["traffic_state"];
-        text(midX + midW - 60, 79, lightNow, 12, lightsWork ? amber : muted);
+        colored(lightsWork ? mint : amber, std::string(lightsWork ? "Светофоры работают"
+            : "Светофоры не работают — бот их не ждёт") + "  /  состояние: "
+            + (state["traffic_state"].empty() ? "--" : state["traffic_state"]));
         ImGui::BeginDisabled(!online);
-        at(midX + 16, 100);
         bool ignoreTraffic = state["ignore_traffic"] == "1";
         if(ImGui::Checkbox("Игнорировать светофоры###plow_ignore_lights", &ignoreTraffic))
             Queue(ignoreTraffic ? "ignore_traffic:1" : "ignore_traffic:0");
         ImGui::EndDisabled();
-        text(midX + 16, 136, lightsWork ? "Светофоры работают"
-            : "Светофоры не работают — бот их не ждёт", 11, lightsWork ? mint : muted,
-            midW - 32);
-        button("Тест светофора###plow_light_test", "test_traffic",
-            midX + 16, 158, midW - 32, 36, online);
-        button("Сохранить (на зелёный)###plow_light_save", "save_traffic",
-            midX + 16, 200, midW - 32, 36, online);
-        button("Забыть ближайший###plow_light_forget", "forget_traffic",
-            midX + 16, 242, midW - 32, 36, online);
-        button("Выгрузить в лог###plow_light_dump", "dump_traffic",
-            midX + 16, 284, midW - 32, 36, online);
-        const std::string trafficInfo = state["traffic_info"].empty()
-            ? "Светофоры не обучены" : state["traffic_info"];
-        text(midX + 16, 330, trafficInfo, 11, muted, midW - 32);
-
-        draw->AddLine(point(midX + 16, 356), point(midX + midW - 16, 356),
-            IM_COL32(47, 33, 65, 255), 1 * scale);
-        text(midX + 16, 364, "СОЗДАТЬ МЕТКУ", 12, mint);
-        const std::string waypoints = state["waypoints"].empty() ? "0" : state["waypoints"];
-        const std::string wpCursor = state["waypoint_cursor"].empty() ? "1" : state["waypoint_cursor"];
-        text(midX + midW - 96, 364, "проезд " + wpCursor + " из " + waypoints, 11, amber);
-        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(28, 78, 52, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(36, 98, 66, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(44, 120, 80, 255));
-        const float third = (midW - 52) / 3;
-        button("Малая###plow_wp_small", "save_waypoint:small",
-            midX + 16, 386, third, 30, online);
-        button("Средняя###plow_wp_mid", "save_waypoint:mid",
-            midX + 26 + third, 386, third, 30, online);
-        button("Большая###plow_wp_big", "save_waypoint:big",
-            midX + 36 + third * 2, 386, third, 30, online);
-        ImGui::PopStyleColor(3);
-
+        if(ImGui::BeginTable("##plow_light_actions", 2, ImGuiTableFlags_SizingStretchSame))
+        {
+            ImGui::TableNextColumn(); action("Тест светофора###plow_light_test", "test_traffic", online);
+            ImGui::TableNextColumn(); action("Сохранить на зелёный###plow_light_save", "save_traffic", online);
+            ImGui::TableNextColumn(); action("Забыть ближайший###plow_light_forget", "forget_traffic", online);
+            ImGui::TableNextColumn(); action("Выгрузить в лог###plow_light_dump", "dump_traffic", online);
+            ImGui::EndTable();
+        }
+        colored(muted, state["traffic_info"].empty() ? "Светофоры не обучены" : state["traffic_info"]);
+        ImGui::EndChild();
+        ImGui::Dummy(ImVec2(0, 4 * scale));
+        ImGui::BeginChild("##plow_marks_card", ImVec2(0, 0),
+            ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
+        section("СОЗДАТЬ МЕТКУ");
+        if(ImGui::BeginTable("##plow_mark_sizes", 3, ImGuiTableFlags_SizingStretchSame))
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(28, 78, 52, 255));
+            ImGui::TableNextColumn(); action("Малая###plow_wp_small", "save_waypoint:small", online);
+            ImGui::TableNextColumn(); action("Средняя###plow_wp_mid", "save_waypoint:mid", online);
+            ImGui::TableNextColumn(); action("Большая###plow_wp_big", "save_waypoint:big", online);
+            ImGui::PopStyleColor();
+            ImGui::EndTable();
+        }
         const std::string lastWp = state["waypoint_last"].empty() ? "--" : state["waypoint_last"];
-        text(midX + 16, 424, "Размер метки #" + lastWp, 11, muted);
+        colored(muted, "Размер метки #" + lastWp + "  /  проезд "
+            + (state["waypoint_cursor"].empty() ? "1" : state["waypoint_cursor"])
+            + " из " + (state["waypoints"].empty() ? "0" : state["waypoints"]));
         static int wpSize = 14;
         static std::string lastWpSize;
         if(lastWpSize != state["waypoint_size"] && !state["waypoint_size"].empty())
@@ -908,69 +826,303 @@ void DrawPlowBot(ImVec2 position, ImVec2 size, float scale)
             wpSize = std::atoi(lastWpSize.c_str());
         }
         ImGui::BeginDisabled(!online || lastWp == "--");
-        at(midX + 16, 442);
-        ImGui::SetNextItemWidth((midW - 32) * scale);
-        if(ImGui::SliderInt("##plow_wp_size", &wpSize, 2, 50, "%d м"))
+        ImGui::SetNextItemWidth(-1);
+        if(DarkFlameSliderInt("##plow_wp_size", &wpSize, 2, 50, "%d м", scale))
         {
             Queue("waypoint_size:" + std::to_string(wpSize));
             lastWpSize = std::to_string(wpSize);
         }
         ImGui::EndDisabled();
-        const float half = (midW - 42) / 2;
-        button("Убрать ближайшую###plow_wp_forget", "forget_waypoint",
-            midX + 16, 480, half, 30, online);
-        button("Выгрузить в лог###plow_wp_dump", "dump_waypoints",
-            midX + 26 + half, 480, half, 30, online);
-        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(28, 78, 52, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(36, 98, 66, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(44, 120, 80, 255));
-        at(midX + 16, 518);
-        if(ImGui::Button("Эдитор меток  >###plow_open_editor",
-            ImVec2((midW - 32) * scale, 30 * scale * vertical)))
+        if(ImGui::BeginTable("##plow_mark_actions", 2, ImGuiTableFlags_SizingStretchSame))
         {
-            editorPage = true;
+            ImGui::TableNextColumn();
+            action("Убрать ближайшую метку###plow_wp_forget", "forget_waypoint", online);
+            ImGui::TableNextColumn();
+            action("Выгрузить метки в лог###plow_wp_dump", "dump_waypoints", online);
+            ImGui::EndTable();
         }
-        ImGui::PopStyleColor(3);
-
-        const float rightX = midX + midW + 16;
-        const float rightW = width - rightX - 16;
-        const float cell = (rightW - 52) / 3;
-        card(rightX, 64, rightW, 494);
-        text(rightX + 16, 79, "ТЕЛЕМЕТРИЯ", 12, muted);
-        static const char* labels[12]{"СКОРОСТЬ", "ТОЧКА", "ВОДА", "СВЕТОФОР",
-            "ДО ТОЧКИ", "ЗАПАС ВОДЫ", "РУЛЬ", "ГАЗ", "ПОМЕХА",
-            "ВОДА, Л", "ЗАСТРЯЛ", "РЕЙСОВ"};
-        for(int i = 0; i < 12; ++i)
-        {
-            const float mx = rightX + 16 + static_cast<float>(i % 3) * (cell + 10);
-            const float my = 100 + static_cast<float>(i / 3) * 72;
-            ImU32 color = white;
-            if(values[i] == "--") color = muted;
-            else if(i == 0) color = mint;
-            else if(i == 2) color = violet;
-            else if(i == 3)
-            {
-                color = values[3].rfind("КРАС", 0) == 0 ? red
-                    : values[3].rfind("ЗЕЛ", 0) == 0 ? mint : muted;
-            }
-            else if(i == 5 && !values[5].empty() && values[5][0] == '-') color = red;
-            metric(mx, my, cell, labels[i], values[i], color);
-        }
-
+        ImGui::EndChild();
     }
-
-    const float reportY = 570;
-    const float reportH = std::max(110.0f, size.y / (scale * vertical) - reportY - 16);
-    card(16, reportY, width - 32, reportH);
-    text(32, reportY + 15, "ОТЧЁТ БОТА", 12, muted);
-    if(!error.empty()) text(220, reportY + 15, error, 12, red, width - 260);
-    else text(220, reportY + 15, path, 11, muted, width - 260);
-    const std::string report = state["report"].empty()
-        ? "Бот ещё не присылал отчёт." : state["report"];
-    text(32, reportY + 38, report, 13, white, width - 64);
-
+    else
+    {
+        const auto split = [](const std::string& value, char separator)
+        {
+            std::vector<std::string> parts;
+            size_t from = 0;
+            while(from <= value.size())
+            {
+                const auto next = value.find(separator, from);
+                parts.push_back(value.substr(from, next == std::string::npos ? std::string::npos : next - from));
+                if(next == std::string::npos) break;
+                from = next + 1;
+            }
+            return parts;
+        };
+        // Выбранное: «номер|x|y|курс|зона|маршрут|расстояние|отмен|подпись»; у точки города номер 0,
+        // а подпись — её роль (gate — ворота депо, finish — финиш).
+        auto edit = online ? split(state["wp_edit"], '|') : std::vector<std::string>{};
+        edit.resize(9);
+        const int selected = edit[0].empty() ? 0 : std::atoi(edit[0].c_str());
+        const int undo = edit[7].empty() ? 0 : std::atoi(edit[7].c_str());
+        const std::string cityPoint = online && selected == 0 && (edit[8] == "gate" || edit[8] == "finish")
+            ? edit[8] : std::string();
+        const bool has = online && (selected > 0 || !cityPoint.empty());
+        const auto distanceText = [](const std::string& value)
+        {
+            return value.empty() || value[0] == '-' ? std::string("--") : value + " м";
+        };
+        const auto pointName = [](const std::string& role)
+        {
+            return role == "gate" ? std::string("Ворота депо") : std::string("Финиш");
+        };
+        const ImU32 pink = IM_COL32(255, 90, 210, 255);
+        const ImU32 sky = IM_COL32(110, 200, 255, 255);
+        // Город эдитора и его маршруты: «номер:название:меток».
+        const auto cities = online ? split(state["ed_cities"], '|') : std::vector<std::string>{};
+        const int cityIndex = std::atoi(state["ed_city"].c_str());
+        const std::string cityName = cityIndex >= 1 && cityIndex <= static_cast<int>(cities.size())
+            ? cities[cityIndex - 1] : std::string();
+        struct RouteRow { std::string id, name, count; };
+        std::vector<RouteRow> routes;
+        if(online)
+        {
+            for(const auto& item : split(state["ed_routes"], ';'))
+            {
+                const auto row = split(item, ':');
+                if(row.size() >= 3 && !row[0].empty()) routes.push_back({row[0], row[1], row[2]});
+            }
+        }
+        const std::string routePick = state["ed_route"].empty() ? "0" : state["ed_route"];
+        const auto routeTitle = [](const RouteRow& route)
+        {
+            return "Маршрут " + route.id + (route.name.empty() ? std::string() : "  " + route.name)
+                + "  (меток " + route.count + ")";
+        };
+        const auto cityButtons = [&](const char* id, float height)
+        {
+            if(!ImGui::BeginTable(("##" + std::string(id)).c_str(), std::max(1, static_cast<int>(cities.size())),
+                ImGuiTableFlags_SizingStretchSame))
+                return;
+            for(size_t i = 0; i < cities.size(); ++i)
+            {
+                ImGui::TableNextColumn();
+                const bool active = static_cast<int>(i) + 1 == cityIndex;
+                ImGui::PushStyleColor(ImGuiCol_Button, active ? IM_COL32(108, 46, 155, 255) : IM_COL32(51, 33, 73, 255));
+                const std::string label = cities[i] + "###" + id + std::to_string(i);
+                if(ImGui::Button(label.c_str(), ImVec2(-1, height * scale))) Queue("ed_city:" + std::to_string(i + 1));
+                ImGui::PopStyleColor();
+            }
+            ImGui::EndTable();
+        };
+        const float editorHeight = std::max(1.0f, ImGui::GetContentRegionAvail().y);
+        const float listWidth = std::min(380 * scale, ImGui::GetContentRegionAvail().x * 0.38f);
+        ImGui::BeginChild("##plow_mark_list", ImVec2(listWidth, editorHeight), ImGuiChildFlags_None,
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        section("ГОРОД");
+        ImGui::BeginDisabled(!online);
+        cityButtons("plow_ed_city", 34);
+        std::string preview = "Все маршруты города";
+        for(const auto& route : routes)
+            if(route.id == routePick) preview = routeTitle(route);
+        ImGui::SetNextItemWidth(-1);
+        if(ImGui::BeginCombo("##plow_ed_route_pick", preview.c_str()))
+        {
+            if(ImGui::Selectable("Все маршруты города", routePick == "0")) Queue("ed_route:0");
+            for(const auto& route : routes)
+            {
+                const std::string label = routeTitle(route) + "###plow_ed_r" + route.id;
+                if(ImGui::Selectable(label.c_str(), route.id == routePick)) Queue("ed_route:" + route.id);
+            }
+            ImGui::EndCombo();
+        }
+        // «Создать маршрут»: город, потом маршрут — эдитор переходит на него, новые метки ложатся в него.
+        if(ImGui::Button("Создать маршрут###plow_ed_new", ImVec2(-1, 38 * scale))) ImGui::OpenPopup("##plow_route_new");
+        ImGui::EndDisabled();
+        ImGui::SetNextWindowSize(ImVec2(700 * scale, 0));
+        if(ImGui::BeginPopup("##plow_route_new"))
+        {
+            section("СОЗДАТЬ МАРШРУТ: ГОРОД");
+            cityButtons("plow_new_city", 36);
+            ImGui::Spacing();
+            section(cityName.empty() ? "МАРШРУТ" : ("МАРШРУТ — " + cityName).c_str());
+            for(const auto& route : routes)
+            {
+                const std::string label = routeTitle(route) + "###plow_new_r" + route.id;
+                if(ImGui::Button(label.c_str(), ImVec2(-1, 34 * scale)))
+                {
+                    Queue("route_new:" + std::to_string(cityIndex) + ":" + route.id);
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            if(routes.empty())
+                colored(muted, "Маршрутов города пока нет: сервер отдаёт их, когда берёшь работу в этом городе.");
+            if(ImGui::Button("Без маршрута — метки по городу###plow_new_none", ImVec2(-1, 34 * scale)))
+            {
+                Queue("route_new:" + std::to_string(cityIndex) + ":0");
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        if(online && !state["ed_work"].empty())
+        {
+            // Идёт создание маршрута: новые метки ложатся в него. Нажать — закончить.
+            ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(28, 78, 52, 255));
+            const std::string work = "Создаю маршрут " + state["ed_work"] + "  /  готово###plow_ed_done";
+            action(work.c_str(), "route_done", online);
+            ImGui::PopStyleColor();
+        }
+        action("Выбрать ближайшую###plow_ed_near", "wp_select:near", online);
+        ImGui::BeginChild("##plow_ed_list", ImVec2(0, 0), ImGuiChildFlags_Borders);
+        ImGui::PushFont(ImGui::GetFont(), 16 * scale);
+        int count = 0;
+        if(online)
+        {
+            // Точки города: ворота депо и финиш — общие для всех его маршрутов.
+            bool header = false;
+            for(const auto& item : split(state["ed_points"], ';'))
+            {
+                const auto row = split(item, ',');
+                if(row.size() < 3 || row[0].empty()) continue;
+                if(!header) { colored(muted, "Точки города"); header = true; }
+                const bool chosen = cityPoint == row[0];
+                ImGui::PushID(row[0].c_str());
+                const std::string label = pointName(row[0]) + "  зона " + row[1] + " м  /  " + distanceText(row[2]);
+                ImGui::PushStyleColor(ImGuiCol_Text, chosen ? amber : row[0] == "gate" ? pink : red);
+                if(ImGui::Selectable(label.c_str(), chosen, 0, ImVec2(0, 28 * scale))) Queue("wp_select:" + row[0]);
+                ImGui::PopStyleColor();
+                ImGui::PopID();
+                ++count;
+            }
+            header = false;
+            for(const auto& item : split(state["wp_list"], ';'))
+            {
+                const auto row = split(item, ',');
+                if(row.size() < 4 || row[0].empty()) continue;
+                if(!header) { colored(muted, "Метки"); header = true; }
+                const int index = std::atoi(row[0].c_str());
+                const bool noRoute = row[3] == "-";
+                ImGui::PushID(index);
+                const std::string label = std::string(noRoute ? "! " : "") + "#" + row[0] + "  зона " + row[1]
+                    + " м  /  " + distanceText(row[2]);
+                ImGui::PushStyleColor(ImGuiCol_Text, index == selected ? amber : noRoute ? red : white);
+                if(ImGui::Selectable(label.c_str(), index == selected, 0, ImVec2(0, 28 * scale)))
+                    Queue("wp_select:" + row[0]);
+                ImGui::PopStyleColor();
+                if(ImGui::IsItemHovered()) ImGui::SetTooltip("До метки: %s; маршрут: %s",
+                    distanceText(row[2]).c_str(), noRoute ? "нет — бот берёт её на любом" : row[3].c_str());
+                ImGui::PopID();
+                ++count;
+            }
+            // Обученные светофоры города: «зелёное состояние,курс,расстояние». Их учат во вкладке «Метки».
+            header = false;
+            for(const auto& item : split(state["ed_lights"], ';'))
+            {
+                const auto row = split(item, ',');
+                if(row.size() < 3 || row[0].empty()) continue;
+                if(!header) { colored(muted, "Светофоры"); header = true; }
+                colored(sky, "Светофор  зелёный = " + row[0] + "  /  курс " + row[1] + "°  /  " + distanceText(row[2]));
+                ++count;
+            }
+        }
+        if(count == 0) colored(muted, online ? "В этом городе пока ничего нет. Создай маршрут или метки во вкладке «Метки»."
+            : "Бот не подключён");
+        ImGui::PopFont();
+        ImGui::EndChild();
+        ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::BeginChild("##plow_mark_edit", ImVec2(0, editorHeight), ImGuiChildFlags_None);
+        section(cityPoint.empty() ? "ВЫБРАННАЯ МЕТКА" : "ВЫБРАННАЯ ТОЧКА ГОРОДА");
+        ImGui::PushFont(ImGui::GetFont(), 28 * scale);
+        const std::string title = !cityPoint.empty() ? cityName + ": " + pointName(cityPoint) + "  /  зона " + edit[4] + " м"
+            : "#" + edit[0] + "  /  зона " + edit[4] + " м";
+        colored(has ? amber : muted, has ? title : online ? "Выбери метку в списке" : "Бот не подключён");
+        ImGui::PopFont();
+        const bool noRoute = has && cityPoint.empty() && edit[5] == "-";
+        if(has) colored(muted, "До неё " + distanceText(edit[6]) + "  /  курс " + edit[3]
+            + (!cityPoint.empty() ? std::string("  /  общая для всех маршрутов города")
+                : noRoute ? std::string() : "  /  маршрут " + edit[5]));
+        if(noRoute && ImGui::BeginTable("##plow_ed_route", 2, ImGuiTableFlags_SizingStretchSame))
+        {
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            colored(red, "Без маршрута: едет на любом");
+            ImGui::TableNextColumn();
+            action("Привязать к маршруту###plow_ed_bind", "wp_route:bind", online);
+            ImGui::EndTable();
+        }
+        static int stepIndex = 1;
+        static const char* stepValue[4]{"0.25", "0.5", "1", "2"};
+        ImGui::BeginDisabled(!has);
+        if(ImGui::BeginTable("##plow_nudge", 3, ImGuiTableFlags_SizingStretchSame))
+        {
+            const auto nudge = [&](const char* label, const char* direction)
+            {
+                if(ImGui::Button(label, ImVec2(-1, 40 * scale)))
+                    Queue(std::string("wp_nudge:") + direction + ":" + stepValue[stepIndex]);
+            };
+            ImGui::TableNextColumn(); ImGui::TableNextColumn(); nudge("Вперёд###plow_ed_fwd", "fwd");
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); nudge("Влево###plow_ed_left", "left");
+            ImGui::TableNextColumn(); colored(muted, "По камере");
+            ImGui::TableNextColumn(); nudge("Вправо###plow_ed_right", "right");
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::TableNextColumn(); nudge("Назад###plow_ed_back", "back");
+            ImGui::EndTable();
+        }
+        colored(muted, "Шаг перемещения");
+        if(ImGui::BeginTable("##plow_steps", 4, ImGuiTableFlags_SizingStretchSame))
+        {
+            for(int i = 0; i < 4; ++i)
+            {
+                ImGui::TableNextColumn();
+                ImGui::PushStyleColor(ImGuiCol_Button, stepIndex == i
+                    ? IM_COL32(108, 46, 155, 255) : IM_COL32(51, 33, 73, 255));
+                const std::string label = std::string(stepValue[i]) + " м###plow_ed_step" + std::to_string(i);
+                if(ImGui::Button(label.c_str(), ImVec2(-1, 36 * scale))) stepIndex = i;
+                ImGui::PopStyleColor();
+            }
+            ImGui::EndTable();
+        }
+        if(ImGui::BeginTable("##plow_radius", 2, ImGuiTableFlags_SizingStretchSame))
+        {
+            ImGui::TableNextColumn(); action("Зона  -0.5 м###plow_ed_smaller", "wp_radius:-0.5");
+            ImGui::TableNextColumn(); action("Зона  +0.5 м###plow_ed_bigger", "wp_radius:+0.5");
+            // Порядок — только у меток: точки города стоят в начале и в конце любого маршрута.
+            ImGui::TableNextColumn(); action("Раньше по ходу###plow_ed_earlier", "wp_order:-1", selected > 0);
+            ImGui::TableNextColumn(); action("Позже по ходу###plow_ed_later", "wp_order:1", selected > 0);
+            ImGui::EndTable();
+        }
+        ImGui::EndDisabled();
+        const std::string undoLabel = "Отменить правку (" + std::to_string(undo) + ")###plow_ed_undo";
+        action(undoLabel.c_str(), "wp_undo", online && undo > 0);
+        ImGui::Spacing();
+        section(cityName.empty() ? "ТОЧКИ ГОРОДА" : ("ТОЧКИ ГОРОДА — " + cityName).c_str());
+        if(ImGui::BeginTable("##plow_city_points", 2, ImGuiTableFlags_SizingStretchSame))
+        {
+            ImGui::TableNextColumn(); action("Ворота депо здесь###plow_city_gate", "city_point:gate", online && !cityName.empty());
+            ImGui::TableNextColumn(); action("Финиш здесь###plow_city_finish", "city_point:finish", online && !cityName.empty());
+            ImGui::EndTable();
+        }
+        colored(muted, "Ставятся там, где стоит машина, с её курсом. Любой маршрут города выезжает "
+            "через ворота, возвращается через них и встаёт на финише.");
+        ImGui::Spacing();
+        section("СОХРАНЕНИЕ");
+        const std::string fileInfo = state["wp_file"].empty() ? "Изменений пока нет" : state["wp_file"];
+        colored(fileInfo.find("не ") != std::string::npos ? red : mint, fileInfo);
+        if(ImGui::CollapsingHeader("Как пользоваться редактором"))
+        {
+            colored(white, "Выбери метку и двигай её кнопками. Направления зависят от камеры. "
+                "Зона задаёт, сколько места у бота для проезда. «Раньше/Позже по ходу» меняет порядок меток. "
+                "Выбранная метка в мире — жёлтая; стрелка показывает направление при её создании.");
+            colored(muted, "Правки сохраняются автоматически в PlowMarks.txt рядом с ботом. "
+                "Резервная копия до первой правки за сессию — PlowMarks.bak.");
+        }
+        action("Выгрузить метки в лог###plow_ed_dump", "dump_waypoints", online);
+        ImGui::EndChild();
+    }
     ImGui::EndChild();
-    ImGui::PopStyleColor(16);
-    ImGui::PopStyleVar(5);
+    ImGui::EndChild();
+    ImGui::PopStyleColor(19);
+    ImGui::PopStyleVar(6);
     ImGui::PopFont();
 }

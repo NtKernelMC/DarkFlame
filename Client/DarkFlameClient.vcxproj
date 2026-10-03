@@ -150,6 +150,7 @@
     <ClInclude Include="logger.h" />
     <ClInclude Include="pilot_telemetry.h" />
     <ClInclude Include="plow_bot.h" />
+    <ClInclude Include="ui_widgets.h" />
     <ClInclude Include="lua_args_hook.h" />
     <ClInclude Include="lua_bridge.h" />
     <ClInclude Include="hook_utils.h" />
